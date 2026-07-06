@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  
+  --color-brand-50: #faf6f5;
+  --color-brand-100: #f4eae7;
+  --color-brand-200: #e7d1cb;
+  --color-brand-300: #d6b3aa;
+  --color-brand-400: #c19184;
+  --color-brand-500: #aa7163;
+  --color-brand-600: #935a4d;
+  --color-brand-700: #7b493f;
+  --color-brand-800: #663f37;
+  --color-brand-900: #563730;
+  --color-brand-950: #301d19;
+}
+
+/* Custom fade-in and smooth scroll transitions */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #faf6f5;
+  color: #301d19;
+  font-family: var(--font-sans);
+}
+
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #faf6f5;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6b3aa;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c19184;
+}
+
+/* Custom marquee ticker flow animation */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  display: inline-flex;
+  animation: marquee 35s linear infinite;
+  width: max-content;
+}
+
+/* Slow spin animation for admin cog */
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 12s linear infinite;
+}
+

@@ -1,0 +1,13 @@
+{
+  "phone1": "+36 (30) 123-4567",
+  "phone2": "+36 (1) 987-6543",
+  "email": "budapest@velvet-nails.hu",
+  "instagram": "@velvet_nails_budapest",
+  "mapUrl": "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d2695.5658607689953!2d19.0401717!3d47.497912!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x4741dc41c3000001%3A0x8603683bf1e0ea!2sBudapest!5e0!3m2!1sen!2shu!4v1700000000000!5m2!1sen!2shu",
+  "addressEn": "Budapest, Andrássy út 12, 1061 Hungary",
+  "addressRu": "Будапешт, проспект Андраши 12, 1061 Венгрия",
+  "addressHu": "Budapest, Andrássy út 12, 1061 Magyarország",
+  "workingHoursEn": "Daily from 10:00 to 22:00",
+  "workingHoursRu": "Ежедневно с 10:00 до 22:00",
+  "workingHoursHu": "Naponta 10:00 és 22:00 között"
+}
