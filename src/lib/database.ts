@@ -98,12 +98,19 @@ export async function loadBookings(): Promise<Booking[]> {
 
   return (data || []).map((b: any) => {
     const commentStr = b.comment || "";
-    let procedureIds = b.procedure_id ? [b.procedure_id] : [];
+    let procedureIds = (Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0)
+      ? b.procedure_ids
+      : (b.procedure_id ? [b.procedure_id] : []);
+
     let cleanComment = commentStr;
-    const match = commentStr.match(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i);
-    if (match) {
-      procedureIds = match[1].split(",").filter(Boolean);
-      cleanComment = commentStr.replace(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i, "").trim();
+
+    // Graceful fallback for older records without native procedure_ids array
+    if (!b.procedure_ids || b.procedure_ids.length === 0) {
+      const match = commentStr.match(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i);
+      if (match) {
+        procedureIds = match[1].split(",").filter(Boolean);
+        cleanComment = commentStr.replace(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i, "").trim();
+      }
     }
     let email = "";
     const emailMatch = cleanComment.match(/\[email:\s*([^\]\s]+)\]/i);
@@ -165,7 +172,7 @@ export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | 
     return newBooking;
   }
 
-  const metaTags = [`[procedures:${pIds.join(",")}]`];
+  const metaTags = [];
   if (booking.email) {
     metaTags.push(`[email:${booking.email.trim()}]`);
   }
@@ -182,6 +189,7 @@ export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | 
       last_name: booking.lastName,
       phone: booking.phone,
       procedure_id: booking.procedureId, // Strict Foreign Key UUID reference
+      procedure_ids: pIds, // Native array array
       booking_date: booking.date,         // Safe DATE mapping
       booking_time: booking.time,         // Safe TIME mapping
       comment: finalComment,

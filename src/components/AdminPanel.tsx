@@ -27,7 +27,8 @@ import {
   MessageSquare,
   Copy,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Lock
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useLanguage } from "../lib/LanguageContext";
@@ -57,9 +58,36 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const { language, t } = useLanguage();
   
-  const [activeTab, setActiveTab] = useState<"bookings" | "procedures" | "contacts">("bookings");
+  const [activeTab, setActiveTab] = useState<"bookings" | "procedures" | "contacts" | "settings">("bookings");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  // Settings Tab states
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingsMessage(null);
+    try {
+      const res = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsMessage({ type: "success", text: language === "ru" ? "Пароль успешно изменен!" : language === "hu" ? "A jelszó sikeresen megváltozott!" : "Password successfully changed!" });
+        setCurrentPassword("");
+        setNewPassword("");
+      } else {
+        setSettingsMessage({ type: "error", text: data.error || "Failed to change password" });
+      }
+    } catch (err) {
+      setSettingsMessage({ type: "error", text: "Network error" });
+    }
+  };
 
   // Calendar View states
   const [adminViewMode, setAdminViewMode] = useState<"calendar" | "list">("calendar");
@@ -474,6 +502,17 @@ Status: ${booking.status.toUpperCase()}
             }`}
           >
             {t("adminTabEditContacts")}
+          </button>
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`px-4 sm:px-5 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer shrink-0 flex items-center gap-2 ${
+              activeTab === "settings"
+                ? "border-brand-500 text-brand-900"
+                : "border-transparent text-brand-600 hover:text-brand-900"
+            }`}
+          >
+            <Settings className="h-4 w-4" />
+            {language === "ru" ? "Настройки" : language === "hu" ? "Beállítások" : "Settings"}
           </button>
         </div>
 
@@ -1538,6 +1577,78 @@ Status: ${booking.status.toUpperCase()}
                 <span>{language === "ru" ? "Сохранить контактные данные" : "Save Contact Information"}</span>
               </button>
             </div>
+          </motion.div>
+        )}
+
+        {/* TAB 4: SETTINGS */}
+        {activeTab === "settings" && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-6 bg-white border border-brand-200/50 rounded-2xl p-6 shadow-sm max-w-lg mx-auto space-y-6"
+          >
+            <div className="flex items-center gap-3 border-b border-brand-100 pb-4">
+              <div className="h-10 w-10 rounded-full bg-brand-50 flex items-center justify-center">
+                <Lock className="h-5 w-5 text-brand-500" />
+              </div>
+              <div>
+                <h3 className="font-serif text-xl font-medium text-brand-950">
+                  {language === "ru" ? "Сменить пароль" : language === "hu" ? "Jelszó módosítása" : "Change Password"}
+                </h3>
+                <p className="text-xs text-brand-500 mt-0.5">
+                  {language === "ru" ? "Обновите пароль администратора." : language === "hu" ? "Frissítse az adminisztrátori jelszót." : "Update your admin access password."}
+                </p>
+              </div>
+            </div>
+
+            {settingsMessage && (
+              <div className={`rounded-lg p-3 text-xs font-semibold border ${
+                settingsMessage.type === "success" 
+                  ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                  : "bg-rose-50 text-rose-600 border-rose-100"
+              }`}>
+                {settingsMessage.type === "success" ? "✓" : "⚠️"} {settingsMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-brand-800 uppercase tracking-wider mb-1">
+                  {language === "ru" ? "Текущий пароль" : language === "hu" ? "Jelenlegi jelszó" : "Current Password"}
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full rounded-lg border border-brand-200 px-4 py-2.5 text-sm text-brand-950 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/50 transition-shadow"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-brand-800 uppercase tracking-wider mb-1">
+                  {language === "ru" ? "Новый пароль" : language === "hu" ? "Új jelszó" : "New Password"}
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded-lg border border-brand-200 px-4 py-2.5 text-sm text-brand-950 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/50 transition-shadow"
+                />
+              </div>
+
+              <div className="pt-4">
+                <button
+                  type="submit"
+                  className="w-full flex items-center justify-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold text-white hover:bg-brand-600 transition-all shadow-md active:scale-[0.98] cursor-pointer"
+                >
+                  <Save className="h-4 w-4" />
+                  {language === "ru" ? "Сохранить новый пароль" : language === "hu" ? "Új jelszó mentése" : "Save New Password"}
+                </button>
+              </div>
+            </form>
           </motion.div>
         )}
 

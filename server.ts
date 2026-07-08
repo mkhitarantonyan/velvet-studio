@@ -9,7 +9,7 @@ import fs from "fs";
 import jwt from "jsonwebtoken";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import crypto from "crypto";
+import crypto, { timingSafeEqual } from "crypto";
 import { DateTime } from "luxon";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
@@ -26,16 +26,41 @@ import {
   getSupabaseClient,
   isSupabaseConfigured
 } from "./src/lib/database";
+import helmet from "helmet";
+import { z } from "zod";
 
 const app = express();
 app.set("trust proxy", 1);
+app.use(helmet({
+  contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      frameSrc: ["'self'", "https://www.google.com/maps/embed/"],
+      imgSrc: ["'self'", "data:", "https:"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // Needed for React inline scripts in production
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "https://api.supabase.co"] // If direct supabase calls exist from client
+    }
+  } : false,
+  crossOriginEmbedderPolicy: false // Allows loading images from other origins like google maps
+}));
 const PORT = 3000;
 
-// Dynamic, high-security CORS policy with strict credentials and origin resolution
+// CORS: allow only the app's own origin(s) and local dev
+const ALLOWED_ORIGINS: string[] = [
+  process.env.APP_URL,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+].filter(Boolean) as string[];
+
 app.use(cors({
   origin: (origin, callback) => {
-    // Always allow all origins for seamless sandbox iframe preview and API access
-    callback(null, true);
+    // Allow same-origin requests (origin is undefined) and whitelisted origins
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: origin ${origin} not allowed`));
+    }
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -62,27 +87,22 @@ const bookingLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Stateless cryptographic JWT-like Admin Token Authentication System
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  if (process.env.NODE_ENV === "production") {
-    console.warn("⚠️ WARNING: JWT_SECRET environment variable is missing in production! Generating a temporary cryptographically secure random session key.");
-    try {
-      return crypto.randomBytes(32).toString("hex");
-    } catch (e) {
-      return "fallback_velvet_nails_secure_secret_2026_prod_" + Math.random().toString(36).substring(2);
-    }
-  }
-  return "fallback_velvet_nails_secure_secret_2026";
-})();
+// JWT Authentication — requires JWT_SECRET in environment, no fallback
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error(
+    "FATAL: JWT_SECRET environment variable is not set. " +
+    "Generate one with: openssl rand -hex 32 — then add it to .env. Refusing to start."
+  );
+}
 
 function generateToken(payload: any): string {
-  // Signs standard JWT with 1 day expiration
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
+  return jwt.sign(payload, JWT_SECRET, { algorithm: "HS256", expiresIn: "4h" });
 }
 
 function verifyToken(token: string): any {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] });
   } catch (err) {
     return null;
   }
@@ -111,7 +131,9 @@ function authenticateAdmin(req: express.Request, res: express.Response, next: ex
 }
 
 /**
- * Robust string sanitization to prevent injection and XSS
+ * Input sanitization — strips HTML tags as a first layer of defense.
+ * NOTE: This is NOT sufficient for XSS prevention on its own.
+ * Always use escapeHtml() when interpolating user data into HTML contexts (emails, etc.).
  */
 function sanitizeString(str: string, maxLength: number): string {
   if (!str) return "";
@@ -119,6 +141,30 @@ function sanitizeString(str: string, maxLength: number): string {
     .replace(/<[^>]*>/g, "") // Strip HTML tags
     .trim()
     .substring(0, maxLength);
+}
+
+/**
+ * HTML output encoding — escapes characters that have special meaning in HTML.
+ * Must be applied when interpolating any user-supplied data into HTML templates.
+ */
+function escapeHtml(str: string): string {
+  return str.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!)
+  );
+}
+
+/**
+ * Constant-time string comparison to prevent timing-based side-channel attacks.
+ */
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Compare against self to keep constant time, then return false
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
 }
 
 /**
@@ -157,69 +203,6 @@ function parseTimeToMinutes(timeStr: string): number {
   return hours * 60 + minutes;
 }
 
-/**
- * Sends a Telegram notification using the Bot API when a new booking is submitted.
- * Dates and times are explicitly formatted in the Europe/Budapest timezone (salon's local time).
- */
-async function sendTelegramNotification(booking: any) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-
-  if (!token || !chatId || token === "your_bot_token" || chatId === "your_chat_id") {
-    console.log("ℹ️ Telegram Bot notifications are not fully configured. Skipping notification.");
-    return;
-  }
-
-  let procedureName = "Unknown Procedure";
-  try {
-    const procedures = await loadProcedures();
-    const pIds = (Array.isArray(booking.procedureIds) && booking.procedureIds.length > 0)
-      ? booking.procedureIds 
-      : [booking.procedureId];
-    const selectedProcs = procedures.filter((p) => pIds.includes(p.id));
-    if (selectedProcs.length > 0) {
-      procedureName = selectedProcs.map((p) => `${p.nameEn} / ${p.nameRu} / ${p.nameHu}`).join("\n    + ");
-    }
-  } catch (err) {
-    console.error("Error fetching procedure name for Telegram notification:", err);
-  }
-
-  // Format the date/time beautifully using Luxon in Budapest timezone
-  const bDateTime = DateTime.fromFormat(`${booking.date} ${booking.time}`, "yyyy-MM-dd HH:mm", { zone: "Europe/Budapest" });
-  const formattedDate = bDateTime.isValid ? bDateTime.setLocale("en").toLocaleString(DateTime.DATE_HUGE) : booking.date;
-  const formattedTime = bDateTime.isValid ? bDateTime.toFormat("HH:mm") : booking.time;
-
-  const text = `🔔 *New Manicure Booking!*
-👤 *Client:* ${booking.firstName} ${booking.lastName}
-📞 *Phone:* \`${booking.phone}\`
-💅 *Procedure:* ${procedureName}
-📅 *Date:* ${formattedDate}
-⏰ *Time:* ${formattedTime} (Budapest Time)
-💬 *Comment:* ${booking.comment || "None"}
-📌 *Status:* ${booking.status.toUpperCase()}`;
-
-  try {
-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: "Markdown",
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Failed to send Telegram notification:", errorText);
-    } else {
-      console.log("✅ Telegram bot notification dispatched successfully.");
-    }
-  } catch (error) {
-    console.error("Error sending Telegram notification:", error);
-  }
-}
 
 /**
  * Sends an email notification to the client.
@@ -398,13 +381,13 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
           <p>Nail Studio Budapest</p>
         </div>
         <div class="content">
-          <h2 class="greeting">Hello, ${booking.firstName} ${booking.lastName}!</h2>
+          <h2 class="greeting">Hello, ${escapeHtml(booking.firstName)} ${escapeHtml(booking.lastName)}!</h2>
           <p class="intro">${intro}</p>
           
           <div class="details-card">
             <div class="details-row">
               <div class="details-label">Service / Услуга / Szolgáltatás:</div>
-              <div class="details-value" style="font-weight: 600;">${procedureName}</div>
+              <div class="details-value" style="font-weight: 600;">${escapeHtml(procedureName)}</div>
             </div>
             <div class="details-row">
               <div class="details-label">Date / Дата / Dátum:</div>
@@ -416,12 +399,12 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
             </div>
             <div class="details-row">
               <div class="details-label">Phone / Телефон / Telefon:</div>
-              <div class="details-value">${booking.phone}</div>
+              <div class="details-value">${escapeHtml(booking.phone)}</div>
             </div>
             ${booking.comment ? `
             <div class="details-row">
               <div class="details-label">Comments:</div>
-              <div class="details-value">${booking.comment}</div>
+              <div class="details-value">${escapeHtml(booking.comment)}</div>
             </div>
             ` : ""}
             <div class="details-row" style="border-bottom: none; margin-top: 10px; align-items: center;">
@@ -657,19 +640,19 @@ async function sendAdminEmailNotification(booking: any) {
           <div class="details-card">
             <div class="details-row">
               <div class="details-label">Client Name:</div>
-              <div class="details-value" style="font-weight: 600;">${booking.firstName} ${booking.lastName}</div>
+              <div class="details-value" style="font-weight: 600;">${escapeHtml(booking.firstName)} ${escapeHtml(booking.lastName)}</div>
             </div>
             <div class="details-row">
               <div class="details-label">Phone Number:</div>
-              <div class="details-value"><a href="tel:${booking.phone}" style="color: #4b3d36; font-weight: 600;">${booking.phone}</a></div>
+              <div class="details-value"><a href="tel:${escapeHtml(booking.phone)}" style="color: #4b3d36; font-weight: 600;">${escapeHtml(booking.phone)}</a></div>
             </div>
             <div class="details-row">
               <div class="details-label">Email Address:</div>
-              <div class="details-value"><a href="mailto:${booking.email || ""}" style="color: #4b3d36;">${booking.email || "N/A"}</a></div>
+              <div class="details-value"><a href="mailto:${escapeHtml(booking.email || "")}" style="color: #4b3d36;">${escapeHtml(booking.email || "N/A")}</a></div>
             </div>
             <div class="details-row">
               <div class="details-label">Service(s):</div>
-              <div class="details-value" style="font-weight: 600;">${procedureName}</div>
+              <div class="details-value" style="font-weight: 600;">${escapeHtml(procedureName)}</div>
             </div>
             <div class="details-row">
               <div class="details-label">Requested Date:</div>
@@ -682,7 +665,7 @@ async function sendAdminEmailNotification(booking: any) {
             ${booking.comment ? `
             <div class="details-row">
               <div class="details-label">Comment:</div>
-              <div class="details-value">${booking.comment}</div>
+              <div class="details-value">${escapeHtml(booking.comment)}</div>
             </div>
             ` : ""}
             <div class="details-row" style="border-bottom: none; margin-top: 10px; align-items: center;">
@@ -744,43 +727,29 @@ SMTP settings are not configured. To enable real email delivery, set SMTP_USER a
 
 // API Routes
 
-// Health and integration status checks
+// Health check — minimal response, no infrastructure details exposed
 app.get("/api/health", (req, res) => {
-  const isDbConfigured = isSupabaseConfigured();
-  res.json({
-    status: "ok",
-    database: isDbConfigured ? "supabase_postgresql" : "local_json_file",
-    telegram: (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) ? "configured" : "unconfigured"
-  });
+  res.json({ status: "ok" });
 });
 
 // Admin Authentication Login Endpoint
-// Standardized HttpOnly Secure cookie response to guard against client-side XSS attacks.
 app.post("/api/admin/login", loginLimiter, (req, res) => {
   const { password } = req.body;
-  const adminPassword = "Budapest2026"; // HARDCODED FOR TESTING!
+  const adminPassword = process.env.ADMIN_PASSWORD;
 
   if (!adminPassword) {
-    console.error("CRITICAL SECURITY ALERT: ADMIN_PASSWORD is not set or is weak in the .env file!");
+    console.error("FATAL: ADMIN_PASSWORD is not set in .env — login is disabled.");
     return res.status(500).json({ error: "Server configuration error. Please contact support." });
   }
-  
-  // --- DEBUGGING BLOCK ---
-  // This will print passwords to your server console to help find the issue.
-  // REMOVE THIS BLOCK AFTER SOLVING THE PROBLEM. 
-  console.log("--- ADMIN LOGIN ATTEMPT ---");
-  console.log("Password from browser:", `"${password}"`);
-  console.log("Password from .env file:", `"${adminPassword}"`);
-  
-  if (password && password.trim() === adminPassword.trim()) {
+
+  if (password && safeCompare(password.trim(), adminPassword.trim())) {
     const token = generateToken({ isAdmin: true });
-    
-    // Set a secure, HTTP-only, SameSite=Strict cookie
+
     res.cookie("velvet_admin_token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 4 * 60 * 60 * 1000, // 4 hours (matches JWT TTL)
     });
 
     return res.json({ success: true });
@@ -796,6 +765,52 @@ app.post("/api/admin/logout", (req, res) => {
     sameSite: "strict"
   });
   return res.json({ success: true });
+});
+
+// Admin Change Password Endpoint
+app.post("/api/admin/change-password", authenticateAdmin, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminPassword) {
+    return res.status(500).json({ error: "Server configuration error." });
+  }
+
+  if (!currentPassword || !safeCompare(currentPassword.trim(), adminPassword.trim())) {
+    return res.status(401).json({ error: "Invalid current password" });
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters long." });
+  }
+
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    let passwordUpdated = false;
+    
+    if (fs.existsSync(envPath)) {
+      let envFile = fs.readFileSync(envPath, "utf8");
+      
+      // Handle the case where ADMIN_PASSWORD is in the file
+      if (/^ADMIN_PASSWORD=/m.test(envFile)) {
+        envFile = envFile.replace(/^ADMIN_PASSWORD=.*$/m, `ADMIN_PASSWORD="${newPassword.trim()}"`);
+      } else {
+        envFile += `\nADMIN_PASSWORD="${newPassword.trim()}"\n`;
+      }
+      fs.writeFileSync(envPath, envFile, "utf8");
+      passwordUpdated = true;
+    } else {
+      console.warn("⚠️ .env file not found. Updating password only in memory. It will reset on server restart.");
+    }
+    
+    // Update memory
+    process.env.ADMIN_PASSWORD = newPassword.trim();
+    
+    return res.json({ success: true, message: passwordUpdated ? "Password updated permanently." : "Password updated for this session only." });
+  } catch (err) {
+    console.error("Failed to change password:", err);
+    return res.status(500).json({ error: "Failed to save new password." });
+  }
 });
 
 // Lightweight auth check endpoint for client-side hydration
@@ -821,7 +836,8 @@ app.get("/api/bookings/busy", async (req, res) => {
     const busySlots = dayBookings.map((b) => {
       let duration = 45;
       if (Array.isArray(b.procedureIds) && b.procedureIds.length > 0) {
-        const selectedProcs = procedures.filter((p) => b.procedureIds.includes(p.id));
+        const pIds = b.procedureIds;
+        const selectedProcs = procedures.filter((p) => pIds.includes(p.id));
         if (selectedProcs.length > 0) {
           duration = selectedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
         }
@@ -898,20 +914,30 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
       ? procedureIds
       : [procedureId];
 
-    if (isSupabaseConfigured() && actualProcedureIds.length === 1) {
+    const procedures = await loadProcedures();
+    const requestedProcs = procedures.filter((p) => actualProcedureIds.includes(p.id));
+    if (requestedProcs.length === 0) {
+      console.warn(`[BOOKING REJECTED] Procedures not found: ${actualProcedureIds}. Client: ${cleanFirstName} ${cleanLastName}`);
+      return res.status(400).json({ error: "Selected procedures do not exist." });
+    }
+
+    const totalDurationMinutes = requestedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
+
+    if (isSupabaseConfigured()) {
       // Attempt DB-Level Atomic RPC function first (Gives complete database-enforced race condition immunity)
       try {
         const emailTag = `[email:${cleanEmail}]`;
         const finalRpcComment = cleanComment 
-          ? `${cleanComment}\n[procedures:${actualProcedureIds.join(",")}]\n${emailTag}`
-          : `[procedures:${actualProcedureIds.join(",")}]\n${emailTag}`;
+          ? `${cleanComment}\n${emailTag}`
+          : `${emailTag}`;
 
         const client = getSupabaseClient();
         const { data: rpcData, error: rpcError } = await client.rpc("create_booking_safely", {
           p_first_name: cleanFirstName,
           p_last_name: cleanLastName,
           p_phone: cleanPhone,
-          p_procedure_id: actualProcedureIds[0],
+          p_procedure_ids: actualProcedureIds,
+          p_total_duration_minutes: totalDurationMinutes,
           p_booking_date: date,
           p_booking_time: time,
           p_comment: finalRpcComment
@@ -935,8 +961,8 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
             lastName: rpcData.last_name,
             phone: rpcData.phone,
             email: cleanEmail,
-            procedureId: rpcData.procedure_id,
-            procedureIds: actualProcedureIds,
+            procedureId: actualProcedureIds[0], // fallback for older clients
+            procedureIds: rpcData.procedure_ids || actualProcedureIds,
             date: rpcData.booking_date,
             time: rpcData.booking_time ? rpcData.booking_time.substring(0, 5) : "",
             comment: cleanComment,
@@ -945,7 +971,6 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
           };
 
           console.log(`[BOOKING SUCCESS - DB RPC] Booking created. ID: ${newBooking.id}. Client: ${cleanFirstName} ${cleanLastName}. Slot: ${date} ${time}`);
-          sendTelegramNotification(newBooking).catch(console.error);
           sendAdminEmailNotification(newBooking).catch(console.error);
           return res.status(201).json(newBooking);
         } else if (rpcError) {
@@ -958,14 +983,7 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
     }
 
     // FALLBACK: State-of-the-art server-side Luxon validation (Budapest local timezone parsed to absolute global milliseconds)
-    const procedures = await loadProcedures();
-    const requestedProcs = procedures.filter((p) => actualProcedureIds.includes(p.id));
-    if (requestedProcs.length === 0) {
-      console.warn(`[BOOKING REJECTED] Procedures not found: ${actualProcedureIds}. Client: ${cleanFirstName} ${cleanLastName}`);
-      return res.status(400).json({ error: "Selected procedures do not exist." });
-    }
-
-    const totalDurationMinutes = requestedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
+    // We already have `procedures`, `requestedProcs`, and `totalDurationMinutes` computed above.
 
     // Convert local Budapest input to absolute Unix time
     const requestedStartDT = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: "Europe/Budapest" });
@@ -983,7 +1001,8 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
     for (const b of bookingsOnSameDate) {
       let existingDuration = 45;
       if (Array.isArray(b.procedureIds) && b.procedureIds.length > 0) {
-        const selectedProcs = procedures.filter((p) => b.procedureIds.includes(p.id));
+        const pIds = b.procedureIds;
+        const selectedProcs = procedures.filter((p) => pIds.includes(p.id));
         if (selectedProcs.length > 0) {
           existingDuration = selectedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
         }
@@ -1031,8 +1050,7 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
 
     console.log(`[BOOKING SUCCESS - FALLBACK] Booking created. ID: ${newBooking.id}. Client: ${cleanFirstName} ${cleanLastName}. Slot: ${date} ${time}`);
 
-    // Fire Telegram Bot and Email Notifications asynchronously
-    sendTelegramNotification(newBooking).catch(console.error);
+    // Fire Email Notification asynchronously
     sendAdminEmailNotification(newBooking).catch(console.error);
 
     res.status(201).json(newBooking);
@@ -1095,13 +1113,28 @@ app.get("/api/procedures", async (req, res) => {
   }
 });
 
+const procedureSchema = z.object({
+  id: z.string().min(1),
+  nameEn: z.string().min(1),
+  nameRu: z.string().min(1),
+  nameHu: z.string().min(1),
+  price: z.number().min(0),
+  durationMinutes: z.number().min(1),
+  descriptionEn: z.string(),
+  descriptionRu: z.string(),
+  descriptionHu: z.string()
+});
+
+const proceduresArraySchema = z.array(procedureSchema);
+
 // Update procedures (Protected - admin only)
 app.put("/api/procedures", authenticateAdmin, async (req, res) => {
   try {
-    const { procedures } = req.body;
-    if (!Array.isArray(procedures)) {
-      return res.status(400).json({ error: "Procedures must be an array" });
+    const parseResult = proceduresArraySchema.safeParse(req.body.procedures);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid procedures data", details: parseResult.error.issues });
     }
+    const procedures = parseResult.data;
     await saveProcedures(procedures);
     res.json(procedures);
   } catch (error) {
@@ -1121,13 +1154,28 @@ app.get("/api/contacts", async (req, res) => {
   }
 });
 
+const contactsSchema = z.object({
+  phone1: z.string().min(1),
+  phone2: z.string(),
+  email: z.string().email(),
+  instagram: z.string(),
+  mapUrl: z.string(),
+  addressEn: z.string().min(1),
+  addressRu: z.string().min(1),
+  addressHu: z.string().min(1),
+  workingHoursEn: z.string().min(1),
+  workingHoursRu: z.string().min(1),
+  workingHoursHu: z.string().min(1)
+});
+
 // Update contacts (Protected - admin only)
 app.put("/api/contacts", authenticateAdmin, async (req, res) => {
   try {
-    const { contacts } = req.body;
-    if (!contacts || typeof contacts !== "object") {
-      return res.status(400).json({ error: "Contacts must be an object" });
+    const parseResult = contactsSchema.safeParse(req.body.contacts);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: "Invalid contacts data", details: parseResult.error.issues });
     }
+    const contacts = parseResult.data;
     await saveContacts(contacts);
     res.json(contacts);
   } catch (error) {

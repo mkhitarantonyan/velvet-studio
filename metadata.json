@@ -2,5 +2,5 @@
   "name": "Velvet Manicure Studio",
   "description": "Premium manicure studio website located in Budapest with a multilingual localized customer booking panel, dynamic procedure customization, and hidden admin portal.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
