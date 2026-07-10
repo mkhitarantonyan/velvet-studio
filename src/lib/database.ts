@@ -41,6 +41,17 @@ export function getSupabaseClient(): SupabaseClient {
 }
 
 /**
+ * Normalizes a procedure object to ensure it has an `isHidden` property.
+ * Defaults to `false` if missing.
+ */
+function normalizeProcedure(p: any): Procedure {
+  return {
+    ...p,
+    isHidden: p.isHidden ?? false,
+  };
+}
+
+/**
  * 1. Bookings CRUD operations (supporting local file fallback)
  */
 export async function loadBookings(): Promise<Booking[]> {
@@ -402,17 +413,21 @@ export async function loadProcedures(): Promise<Procedure[]> {
     try {
       if (fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
-        return JSON.parse(content);
+        const procedures = JSON.parse(content);
+        if (!Array.isArray(procedures)) return [];
+        return procedures.map(normalizeProcedure);
       }
     } catch (err) {
       console.error("Failed to read procedures.json fallback:", err);
     }
     try {
-      fs.writeFileSync(filePath, JSON.stringify(DEFAULT_PROCEDURES, null, 2), "utf-8");
+      const normalizedDefaults = DEFAULT_PROCEDURES.map(normalizeProcedure);
+      fs.writeFileSync(filePath, JSON.stringify(normalizedDefaults, null, 2), "utf-8");
+      return normalizedDefaults;
     } catch (err) {
       console.error("Failed to write default procedures.json:", err);
     }
-    return DEFAULT_PROCEDURES;
+    return DEFAULT_PROCEDURES.map(normalizeProcedure);
   }
 
   const client = getSupabaseClient();
@@ -424,10 +439,10 @@ export async function loadProcedures(): Promise<Procedure[]> {
 
   if (!data || data.length === 0) {
     await saveProcedures(DEFAULT_PROCEDURES);
-    return DEFAULT_PROCEDURES;
+    return DEFAULT_PROCEDURES.map(normalizeProcedure);
   }
 
-  return data.map((p: any) => ({
+  return data.map((p: any) => normalizeProcedure({
     id: String(p.id),
     nameEn: p.name_en,
     nameRu: p.name_ru,
@@ -437,15 +452,18 @@ export async function loadProcedures(): Promise<Procedure[]> {
     descriptionEn: p.description_en || "",
     descriptionRu: p.description_ru || "",
     descriptionHu: p.description_hu || "",
+    isHidden: p.is_hidden,
   }));
 }
 
 export async function saveProcedures(procedures: Procedure[]): Promise<void> {
+  const normalizedProcedures = procedures.map(normalizeProcedure);
+
   if (!isSupabaseConfigured()) {
     console.warn("⚠️ Supabase is not configured. Saving procedures to local file 'procedures.json'.");
     const filePath = path.join(process.cwd(), "procedures.json");
     try {
-      fs.writeFileSync(filePath, JSON.stringify(procedures, null, 2), "utf-8");
+      fs.writeFileSync(filePath, JSON.stringify(normalizedProcedures, null, 2), "utf-8");
     } catch (err) {
       console.error("Failed to write to procedures.json:", err);
       throw err;
@@ -454,7 +472,31 @@ export async function saveProcedures(procedures: Procedure[]): Promise<void> {
   }
 
   const client = getSupabaseClient();
-  const mapped = procedures.map((p) => ({
+
+  // `upsert` below only inserts new rows / updates existing ones — it never removes
+  // rows that are missing from the payload. Without this step, a procedure deleted
+  // in the admin panel (and no longer present in `procedures`) would stay in the
+  // database forever and reappear after every reload. So we first diff against
+  // what's actually in the table and explicitly delete anything that's gone missing.
+  const { data: existingRows, error: fetchError } = await client.from("procedures").select("id");
+  if (fetchError) {
+    console.error("Error fetching existing procedure ids from Supabase:", fetchError);
+    throw fetchError;
+  }
+  const incomingIds = new Set(normalizedProcedures.map((p) => String(p.id)));
+  const idsToRemove = (existingRows || [])
+    .map((row: any) => String(row.id))
+    .filter((id: string) => !incomingIds.has(id));
+
+  if (idsToRemove.length > 0) {
+    const { error: deleteError } = await client.from("procedures").delete().in("id", idsToRemove);
+    if (deleteError) {
+      console.error("Error removing deleted procedures from Supabase:", deleteError);
+      throw deleteError;
+    }
+  }
+
+  const mapped = normalizedProcedures.map((p) => ({
     id: p.id,
     name_en: p.nameEn,
     name_ru: p.nameRu,
@@ -464,13 +506,78 @@ export async function saveProcedures(procedures: Procedure[]): Promise<void> {
     description_en: p.descriptionEn,
     description_ru: p.descriptionRu,
     description_hu: p.descriptionHu,
+    is_hidden: p.isHidden,
   }));
 
-  const { error } = await client.from("procedures").upsert(mapped);
-  if (error) {
-    console.error("Error saving procedures to Supabase:", error);
-    throw error;
+  if (mapped.length > 0) {
+    const { error } = await client.from("procedures").upsert(mapped);
+    if (error) {
+      console.error("Error saving procedures to Supabase:", error);
+      throw error;
+    }
   }
+}
+
+/**
+ * Deletes one or more procedures immediately — used by the admin panel's single-row
+ * "Delete" button and the multi-select "Delete selected" bulk action, independent of
+ * the "Save All Changes" flow.
+ *
+ * If a procedure is still referenced by an existing booking, Supabase will reject the
+ * delete (foreign key constraint) rather than throwing for the whole batch, that id is
+ * reported back as "blocked" so the caller can tell the admin exactly which service(s)
+ * could not be removed and why, while still deleting everything that was safe to.
+ */
+export async function deleteProcedures(ids: string[]): Promise<{ deleted: string[]; blocked: string[] }> {
+  const uniqueIds = Array.from(new Set(ids.map(String)));
+  if (uniqueIds.length === 0) return { deleted: [], blocked: [] };
+
+  if (!isSupabaseConfigured()) {
+    console.warn("⚠️ Supabase is not configured. Deleting procedures from local file 'procedures.json'.");
+    const filePath = path.join(process.cwd(), "procedures.json");
+    let current: Procedure[] = [];
+    try {
+      if (fs.existsSync(filePath)) {
+        current = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      }
+    } catch (err) {
+      console.error("Failed to read procedures.json during delete:", err);
+    }
+    const idsSet = new Set(uniqueIds);
+    const remaining = current.filter((p) => !idsSet.has(String(p.id)));
+    const deleted = current.filter((p) => idsSet.has(String(p.id))).map((p) => String(p.id));
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(remaining, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Failed to write procedures.json during delete:", err);
+      throw err;
+    }
+    return { deleted, blocked: [] };
+  }
+
+  const client = getSupabaseClient();
+  const { error } = await client.from("procedures").delete().in("id", uniqueIds);
+
+  if (!error) {
+    return { deleted: uniqueIds, blocked: [] };
+  }
+
+  // Bulk delete failed — most likely a foreign key violation because one of the
+  // selected services is still referenced by an existing booking. Retry one by one
+  // so everything that CAN be deleted still gets deleted.
+  console.warn("Bulk procedure delete failed, retrying individually:", error.message);
+  const deleted: string[] = [];
+  const blocked: string[] = [];
+  for (const id of uniqueIds) {
+    const { error: singleError } = await client.from("procedures").delete().eq("id", id);
+    if (singleError) {
+      console.error(`Could not delete procedure ${id}:`, singleError.message);
+      blocked.push(id);
+    } else {
+      deleted.push(id);
+    }
+  }
+  return { deleted, blocked };
 }
 
 /**

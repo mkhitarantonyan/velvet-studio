@@ -1,27 +1,5 @@
 [
   {
-    "id": "11111111-1111-1111-1111-111111111111",
-    "nameEn": "Classic Manicure",
-    "nameRu": "Классический маникюр",
-    "nameHu": "Klasszikus manikűr",
-    "price": 5500,
-    "durationMinutes": 45,
-    "descriptionEn": "Hygienic treatment of the cuticle, shaping of the nail, nourishing oil and light hand massage.",
-    "descriptionRu": "Гигиеническая обработка кутикулы, придание формы свободному краю ногтя, питательное масло и легкий массаж рук.",
-    "descriptionHu": "A kutikula higiénikus kezelése, a köröm formázása, tápláló olaj és könnyű kézmasszázs."
-  },
-  {
-    "id": "22222222-2222-2222-2222-222222222222",
-    "nameEn": "Hardware Manicure",
-    "nameRu": "Аппаратный маникюр",
-    "nameHu": "Gépi manikűr",
-    "price": 6500,
-    "durationMinutes": 60,
-    "descriptionEn": "Modern safe technique of cuticle and nail fold treatment using a professional machine without soaking.",
-    "descriptionRu": "Безопасная современная техника обработки кутикулы и ногтевых валиков с помощью профессионального аппарата без размачивания.",
-    "descriptionHu": "A kutikula és a körömredők biztonságos, modern kezelése professzionális géppel, áztatás nélkül."
-  },
-  {
     "id": "33333333-3333-3333-3333-333333333333",
     "nameEn": "Manicure + Gel Polish",
     "nameRu": "Маникюр + Покрытие гель-лак",
@@ -30,7 +8,8 @@
     "durationMinutes": 90,
     "descriptionEn": "Combined treatment of nails, plate alignment with a base, solid premium long-lasting gel polish and top.",
     "descriptionRu": "Комбинированная обработка ногтей, выравнивание ногтевой пластины базой, однотонное покрытие премиальным стойким гель-лаком и топ.",
-    "descriptionHu": "Kombinált körömkezelés, a körömlemez kiegyenlítése alappal, prémium tartós gél lakk fedés és top."
+    "descriptionHu": "Kombinált körömkezelés, a körömlemez kiegyenlítése alappal, prémium tartós gél lakk fedés és top.",
+    "isHidden": false
   },
   {
     "id": "44444444-4444-4444-4444-444444444444",
@@ -41,7 +20,8 @@
     "durationMinutes": 120,
     "descriptionEn": "Modeling of nails with gel/acrylic gel on forms, filing, creating desired length and shape, perfect glare.",
     "descriptionRu": "Моделирование ногтей гелем/акригелем на формы, опил, придание желаемой длины и формы, идеальный блик.",
-    "descriptionHu": "Körömmodellezés zselével vagy akrilzselével sablonra, reszelés, a kívánt hosszúság és forma kialakítása."
+    "descriptionHu": "Körömmodellezés zselével vagy akrilzselével sablonra, reszelés, a kívánt hosszúság és forma kialakítása.",
+    "isHidden": false
   },
   {
     "id": "55555555-5555-5555-5555-555555555555",
@@ -52,7 +32,8 @@
     "durationMinutes": 30,
     "descriptionEn": "Art painting, stamping, rubbing, foil, gradient or sliders. Price depends on complexity.",
     "descriptionRu": "Художественная роспись, стемпинг, втирка, фольга, градиент или слайдеры. Цена зависит от сложности рисунка.",
-    "descriptionHu": "Kézzel festett minták, nyomdázás, pigmentpor, fólia, ombre vagy matricák. Az ár a bonyolultságtól függ."
+    "descriptionHu": "Kézzel festett minták, nyomdázás, pigmentpor, fólia, ombre vagy matricák. Az ár a bonyolultságtól függ.",
+    "isHidden": false
   },
   {
     "id": "66666666-6666-6666-6666-666666666666",
@@ -63,6 +44,7 @@
     "durationMinutes": 30,
     "descriptionEn": "Gentle removal of previous gel polish with a milling cutter, shaping, soft buff polishing and strengthening treatment.",
     "descriptionRu": "Бережное снятие предыдущего покрытия фрезой, придание формы, полировка ногтевой пластины мягким бафом и лечебный укрепитель ногтей.",
-    "descriptionHu": "A korábbi bevonat kíméletes eltávolítása csiszológéppel, formázás, kímélő polírozás és körömerősítő kezelés."
+    "descriptionHu": "A korábbi bevonat kíméletes eltávolítása csiszológéppel, formázás, kímélő polírozás és körömerősítő kezelés.",
+    "isHidden": false
   }
 ]

@@ -37,6 +37,7 @@ export interface Procedure {
   descriptionEn: string;
   descriptionRu: string;
   descriptionHu: string;
+  isHidden?: boolean;
 }
 
 export interface SalonContacts {

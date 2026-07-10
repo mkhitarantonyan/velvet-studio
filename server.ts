@@ -87,14 +87,16 @@ const bookingLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// JWT Authentication — requires JWT_SECRET in environment, no fallback
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error(
-    "FATAL: JWT_SECRET environment variable is not set. " +
-    "Generate one with: openssl rand -hex 32 — then add it to .env. Refusing to start."
-  );
-}
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error(
+      "FATAL: JWT_SECRET environment variable is not set. " +
+      "Generate one with: openssl rand -hex 32 — then add it to .env. Refusing to start."
+    );
+  }
+  return secret;
+})();
 
 function generateToken(payload: any): string {
   return jwt.sign(payload, JWT_SECRET, { algorithm: "HS256", expiresIn: "4h" });
@@ -1122,7 +1124,8 @@ const procedureSchema = z.object({
   durationMinutes: z.number().min(1),
   descriptionEn: z.string(),
   descriptionRu: z.string(),
-  descriptionHu: z.string()
+  descriptionHu: z.string(),
+  isHidden: z.boolean().optional()
 });
 
 const proceduresArraySchema = z.array(procedureSchema);
@@ -1130,16 +1133,90 @@ const proceduresArraySchema = z.array(procedureSchema);
 // Update procedures (Protected - admin only)
 app.put("/api/procedures", authenticateAdmin, async (req, res) => {
   try {
-    const parseResult = proceduresArraySchema.safeParse(req.body.procedures);
+    // 1. Нормализуем входящие данные: гарантируем isHidden
+    const rawProcedures = req.body.procedures;
+    if (!Array.isArray(rawProcedures)) {
+      return res.status(400).json({ error: "procedures must be an array" });
+    }
+
+    const proceduresWithDefaults = rawProcedures.map((p: any) => ({
+      ...p,
+      isHidden: p.isHidden ?? false, // если undefined или null -> false
+    }));
+
+    // 2. Валидируем
+    const parseResult = proceduresArraySchema.safeParse(proceduresWithDefaults);
     if (!parseResult.success) {
       return res.status(400).json({ error: "Invalid procedures data", details: parseResult.error.issues });
     }
-    const procedures = parseResult.data;
-    await saveProcedures(procedures);
-    res.json(procedures);
-  } catch (error) {
+
+    const validatedProcedures = parseResult.data;
+
+    // 3. Сохраняем
+    console.log("📝 Сохраняем процедуры:", JSON.stringify(validatedProcedures, null, 2));
+    await saveProcedures(validatedProcedures);
+    console.log("✅ Процедуры сохранены");
+
+    // 4. Возвращаем сохранённые данные (они уже нормализованы)
+    res.json(validatedProcedures);
+  } catch (error: any) {
     console.error("Failed to save procedures API:", error);
-    res.status(500).json({ error: "Failed to save procedures" });
+    const message = error?.message || "Failed to save procedures";
+    const status = message.includes("linked to existing bookings") ? 409 : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+// Delete Procedures (Protected - admin only)
+app.delete("/api/procedures", authenticateAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "Invalid request: 'ids' must be a non-empty array." });
+    }
+
+    const bookings = await loadBookings();
+    const procedures = await loadProcedures();
+    
+    const allProcedureIdsInBookings = new Set<string>();
+    bookings.forEach(booking => {
+      if (booking.procedureId) {
+        allProcedureIdsInBookings.add(String(booking.procedureId));
+      }
+      if (Array.isArray(booking.procedureIds)) {
+        booking.procedureIds.forEach(pid => allProcedureIdsInBookings.add(String(pid)));
+      }
+    });
+
+    const idsToDelete: string[] = [];
+    const blockedIds: string[] = [];
+
+    ids.forEach(id => {
+      if (allProcedureIdsInBookings.has(String(id))) {
+        blockedIds.push(String(id));
+      } else {
+        idsToDelete.push(String(id));
+      }
+    });
+
+    if (idsToDelete.length > 0) {
+      const remainingProcedures = procedures.filter((p: any) => !idsToDelete.includes(String(p.id)));
+      await saveProcedures(remainingProcedures);
+    }
+
+    if (blockedIds.length > 0) {
+      const blockedNames = procedures.filter((p: any) => blockedIds.includes(String(p.id))).map((p: any) => p.nameEn).join(", ");
+      return res.status(409).json({
+        error: `Could not delete some services because they are linked to existing bookings: ${blockedNames}`,
+        deleted: idsToDelete,
+        blocked: blockedIds,
+      });
+    }
+
+    res.json({ success: true, deleted: idsToDelete });
+  } catch (error) {
+    console.error("Failed to delete procedures API:", error);
+    res.status(500).json({ error: "Failed to delete procedures" });
   }
 });
 

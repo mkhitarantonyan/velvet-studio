@@ -40,7 +40,8 @@ interface AdminPanelProps {
   onUpdateStatus: (id: string, status: 'confirmed' | 'cancelled') => Promise<void>;
   onDeleteBooking: (id: string) => Promise<void>;
   onAddBooking: (bookingData: Omit<Booking, 'id' | 'status' | 'createdAt'>) => Promise<void>;
-  onUpdateProcedures: (procedures: Procedure[]) => Promise<void>;
+  onUpdateProcedures: (procedures: Procedure[]) => Promise<Procedure[]>;
+  onDeleteProcedures: (ids: string[]) => Promise<any>;
   onUpdateContacts: (contacts: SalonContacts) => Promise<void>;
   onLogout: () => void;
 }
@@ -53,6 +54,7 @@ export default function AdminPanel({
   onDeleteBooking, 
   onAddBooking,
   onUpdateProcedures,
+  onDeleteProcedures,
   onUpdateContacts,
   onLogout
 }: AdminPanelProps) {
@@ -254,6 +256,69 @@ Status: ${booking.status.toUpperCase()}
   const [editingProcedureId, setEditingProcedureId] = useState<string | null>(null);
   const [procSaveSuccess, setProcSaveSuccess] = useState(false);
 
+  // Multi-select + immediate delete state for the services table
+  const [selectedProcedureIds, setSelectedProcedureIds] = useState<string[]>([]);
+  const [procDeletingIds, setProcDeletingIds] = useState<string[]>([]);
+  const [procDeleteMessage, setProcDeleteMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const toggleProcedureSelected = (id: string) => {
+    setSelectedProcedureIds(prev =>
+      prev.includes(id) ? prev.filter(existingId => existingId !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllProcedures = () => {
+    setSelectedProcedureIds(prev =>
+      prev.length === localProcedures.length ? [] : localProcedures.map(p => p.id)
+    );
+  };
+
+  // Deletes right away (no need to press "Save All Changes" first). Handles both
+  // a single service (from the row's own Delete button) and a bulk selection.
+  const handleDeleteProceduresNow = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setProcDeleteMessage(null);
+    setProcDeletingIds(ids);
+    try {
+      await onDeleteProcedures(ids);
+      setLocalProcedures(prev => prev.filter(p => !ids.includes(p.id)));
+      setSelectedProcedureIds(prev => prev.filter(id => !ids.includes(id)));
+      setProcDeleteMessage({
+        type: "success",
+        text: language === "ru"
+          ? `Удалено услуг: ${ids.length}.`
+          : language === "hu"
+            ? `${ids.length} szolgáltatás törölve.`
+            : `Deleted ${ids.length} service(s).`
+      });
+    } catch (err: any) {
+      // Partial failure: some ids were deleted, some are blocked because they're
+      // still used by existing bookings. Remove the ones that DID get deleted and
+      // tell the admin exactly which service(s) are blocked and why.
+      const deletedIds: string[] = err?.deleted || [];
+      const blockedIds: string[] = err?.blocked || ids.filter(id => !deletedIds.includes(id));
+      if (deletedIds.length > 0) {
+        setLocalProcedures(prev => prev.filter(p => !deletedIds.includes(p.id)));
+        setSelectedProcedureIds(prev => prev.filter(id => !deletedIds.includes(id)));
+      }
+      const blockedNames = localProcedures
+        .filter(p => blockedIds.includes(p.id))
+        .map(p => p.nameEn)
+        .join(", ");
+      setProcDeleteMessage({
+        type: "error",
+        text: language === "ru"
+          ? `Нельзя удалить "${blockedNames}" — на эту услугу есть действующие записи клиентов. Сначала обработайте или удалите эти записи.`
+          : language === "hu"
+            ? `A(z) "${blockedNames}" nem törölhető — élő foglalások tartoznak hozzá. Előbb kezelje vagy törölje azokat.`
+            : `Could not delete "${blockedNames}" — there are existing bookings for it. Handle or remove those bookings first.`
+      });
+    } finally {
+      setProcDeletingIds([]);
+      setTimeout(() => setProcDeleteMessage(null), 6000);
+    }
+  };
+
   // Editable contacts form
   const [localContacts, setLocalContacts] = useState<SalonContacts | null>(null);
   const [contactsSaveSuccess, setContactsSaveSuccess] = useState(false);
@@ -262,6 +327,7 @@ Status: ${booking.status.toUpperCase()}
   useEffect(() => {
     if (procedures && procedures.length > 0) {
       setLocalProcedures(JSON.parse(JSON.stringify(procedures)));
+      setSelectedProcedureIds(prev => prev.filter(id => procedures.some(p => p.id === id)));
       if (!newProcedure) {
         setNewProcedure(procedures[0].id);
       }
@@ -343,7 +409,8 @@ Status: ${booking.status.toUpperCase()}
 
   const handleSaveProcedures = async () => {
     try {
-      await onUpdateProcedures(localProcedures);
+      const savedProcedures = await onUpdateProcedures(localProcedures);
+      setLocalProcedures(savedProcedures);
       setProcSaveSuccess(true);
       setTimeout(() => setProcSaveSuccess(false), 3000);
       setEditingProcedureId(null);
@@ -352,7 +419,7 @@ Status: ${booking.status.toUpperCase()}
     }
   };
 
-  const handleProcedureFieldChange = (id: string, field: keyof Procedure, value: string | number) => {
+  const handleProcedureFieldChange = (id: string, field: keyof Procedure, value: string | number | boolean) => {
     setLocalProcedures(prev => prev.map(p => {
       if (p.id === id) {
         return { ...p, [field]: value };
@@ -1237,13 +1304,45 @@ Status: ${booking.status.toUpperCase()}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-6 space-y-6"
+            className="mt-6 space-y-4"
           >
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-brand-100/40 p-4 rounded-xl border border-brand-200/40 gap-4">
-              <span className="text-xs text-brand-700 font-medium">
-                💡 {language === "ru" ? "Вы можете добавить новые услуги, удалить ненужные, изменить цены и настроить длительность процедур." : language === "hu" ? "Új szolgáltatásokat adhat hozzá, törölheti a feleslegeseket, vagy módosíthatja az árakat és az időtartamot." : "You can add new procedures, delete unneeded ones, modify prices, and set exact durations."}
-              </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-xs text-brand-600 font-semibold uppercase tracking-wider">
+                  💡 {language === "ru" ? "Управление услугами" : language === "hu" ? "Szolgáltatások kezelése" : "Manage Services"}
+                </p>
+                <h3 className="text-sm font-semibold text-brand-950 mt-1">
+                  {language === "ru" ? "Добавляйте, редактируйте и удаляйте услуги для Book Online" : language === "hu" ? "Adjon hozzá, szerkesszen és töröljön szolgáltatásokat" : "Add, edit and delete services available for booking"}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {selectedProcedureIds.length > 0 && (
+                  <button
+                    onClick={() => {
+                      showConfirm(
+                        language === "ru" ? "Удаление услуг" : language === "hu" ? "Szolgáltatások törlése" : "Delete Services",
+                        language === "ru"
+                          ? `Удалить выбранные услуги (${selectedProcedureIds.length})? Это действие необратимо.`
+                          : language === "hu"
+                            ? `Törli a kiválasztott szolgáltatásokat (${selectedProcedureIds.length})? Ez nem vonható vissza.`
+                            : `Delete the selected services (${selectedProcedureIds.length})? This cannot be undone.`,
+                        () => handleDeleteProceduresNow(selectedProcedureIds)
+                      );
+                    }}
+                    disabled={procDeletingIds.length > 0}
+                    className="flex items-center gap-1.5 rounded-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>
+                      {language === "ru"
+                        ? `Удалить выбранные (${selectedProcedureIds.length})`
+                        : language === "hu"
+                          ? `Kiválasztottak törlése (${selectedProcedureIds.length})`
+                          : `Delete selected (${selectedProcedureIds.length})`}
+                    </span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     const newId = self.crypto && self.crypto.randomUUID ? self.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -1259,191 +1358,178 @@ Status: ${booking.status.toUpperCase()}
                       durationMinutes: 60,
                       descriptionEn: "Description...",
                       descriptionRu: "Описание...",
-                      descriptionHu: "Leírás..."
+                      descriptionHu: "Leírás...",
+                      isHidden: false
                     };
                     setLocalProcedures(prev => [newProc, ...prev]);
-                    setEditingProcedureId(newId);
                   }}
-                  className="flex items-center gap-1.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 text-xs font-bold transition-colors shadow-sm cursor-pointer shrink-0"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   <span>{language === "ru" ? "Добавить услугу" : language === "hu" ? "Új szolgáltatás" : "Add Service"}</span>
-                </button>
-                <button
-                  onClick={handleSaveProcedures}
-                  className="flex items-center gap-1.5 rounded-full bg-brand-500 px-4 py-2 text-xs font-bold text-white hover:bg-brand-600 transition-colors shadow-sm cursor-pointer"
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  <span>{language === "ru" ? "Сохранить всё" : language === "hu" ? "Mentés" : "Save All Changes"}</span>
                 </button>
               </div>
             </div>
 
             {procSaveSuccess && (
               <div className="rounded-lg bg-emerald-50 p-3 text-xs font-semibold text-emerald-600 border border-emerald-100">
-                ✓ {language === "ru" ? "Изменения услуг успешно сохранены на сервере!" : language === "hu" ? "Szolgáltatások sikeresen mentve a szerverre!" : "Procedure updates successfully saved on the server!"}
+                ✓ {language === "ru" ? "Изменения успешно сохранены!" : language === "hu" ? "Módosítások sikeresen mentve!" : "Changes saved successfully!"}
               </div>
             )}
 
-            <div className="grid gap-6 md:grid-cols-2">
-              {localProcedures.map((proc) => (
-                <div 
-                  key={proc.id} 
-                  className={`rounded-2xl border p-5 bg-white shadow-sm transition-all ${
-                    editingProcedureId === proc.id ? "border-brand-500 ring-1 ring-brand-100" : "border-brand-200/50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between border-b border-brand-100 pb-3 mb-4">
-                    <span className="text-xs font-bold uppercase tracking-wider text-brand-500 font-mono">ID: {proc.id.substring(0, 8)}...</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          showConfirm(
-                            language === "ru" ? "Удаление услуги" : language === "hu" ? "Szolgáltatás törlése" : "Delete Service",
-                            language === "ru" ? `Вы действительно хотите удалить услугу "${proc.nameRu || proc.nameEn}"?` 
-                            : language === "hu" ? `Biztosan törölni szeretné a következő szolgáltatást: "${proc.nameHu || proc.nameEn}"?`
-                            : `Are you sure you want to delete "${proc.nameEn}"?`,
-                            () => setLocalProcedures(prev => prev.filter(p => p.id !== proc.id))
-                          );
-                        }}
-                        className="text-xs font-semibold text-rose-600 hover:text-rose-900 flex items-center gap-1 cursor-pointer bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-full border border-rose-200/40"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>{language === "ru" ? "Удалить" : "Delete"}</span>
-                      </button>
-                      <button
-                        onClick={() => setEditingProcedureId(editingProcedureId === proc.id ? null : proc.id)}
-                        className="text-xs font-semibold text-brand-600 hover:text-brand-900 flex items-center gap-1 cursor-pointer bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-full border border-brand-200/40"
-                      >
-                        <Edit3 className="h-3.5 w-3.5" />
-                        <span>{editingProcedureId === proc.id ? (language === "ru" ? "Закрыть" : "Close") : (language === "ru" ? "Редактировать" : "Edit")}</span>
-                      </button>
-                    </div>
-                  </div>
+            {procDeleteMessage && (
+              <div className={`rounded-lg p-3 text-xs font-semibold border ${
+                procDeleteMessage.type === "success"
+                  ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                  : "bg-rose-50 text-rose-700 border-rose-200"
+              }`}>
+                {procDeleteMessage.type === "success" ? "✓ " : "⚠️ "}{procDeleteMessage.text}
+              </div>
+            )}
 
-                  {editingProcedureId === proc.id ? (
-                    /* Edit Form fields */
-                    <div className="space-y-4 text-xs">
-                      {/* Name Translations */}
-                      <div className="space-y-2 border-b border-brand-100 pb-3">
-                        <p className="font-bold text-brand-800 uppercase tracking-wider text-[10px] flex items-center gap-1">
-                          <Globe className="h-3 w-3" /> Procedure Names
-                        </p>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
-                            <label className="block text-[10px] text-brand-500">English (EN)</label>
-                            <input
-                              type="text"
-                              value={proc.nameEn}
-                              onChange={(e) => handleProcedureFieldChange(proc.id, "nameEn", e.target.value)}
-                              className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-brand-500">Russian (RU)</label>
+            {/* Services Table */}
+            <div className="overflow-x-auto border border-brand-200/50 rounded-xl bg-white shadow-sm">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-brand-100 bg-brand-50/50">
+                    <th className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={localProcedures.length > 0 && selectedProcedureIds.length === localProcedures.length}
+                        onChange={toggleSelectAllProcedures}
+                        className="h-3.5 w-3.5 rounded border-brand-300 text-brand-600 focus:ring-brand-400 cursor-pointer"
+                        aria-label={language === "ru" ? "Выбрать все услуги" : language === "hu" ? "Összes kijelölése" : "Select all services"}
+                      />
+                    </th>
+                    <th className="text-left px-4 py-3 font-bold text-brand-700 uppercase tracking-wider text-[10px]">
+                      {language === "ru" ? "Услуга (EN / RU / HU)" : language === "hu" ? "Szolgáltatás" : "Service (EN/RU/HU)"}
+                    </th>
+                    <th className="text-center px-4 py-3 font-bold text-brand-700 uppercase tracking-wider text-[10px]">
+                      {language === "ru" ? "Цена (Ft)" : "Price (Ft)"}
+                    </th>
+                    <th className="text-center px-4 py-3 font-bold text-brand-700 uppercase tracking-wider text-[10px]">
+                      {language === "ru" ? "Длительность" : language === "hu" ? "Időtartam" : "Duration"}
+                    </th>
+                    <th className="text-center px-4 py-3 font-bold text-brand-700 uppercase tracking-wider text-[10px]">
+                      {language === "ru" ? "Скрыто" : "Hidden"}
+                    </th>
+                    <th className="text-center px-4 py-3 font-bold text-brand-700 uppercase tracking-wider text-[10px]">
+                      {language === "ru" ? "Действия" : "Actions"}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-100">
+                  {localProcedures.map((proc) => (
+                    <tr
+                      key={proc.id}
+                      className={`hover:bg-brand-50/30 transition-colors ${procDeletingIds.includes(proc.id) ? "opacity-40 pointer-events-none" : ""} ${selectedProcedureIds.includes(proc.id) ? "bg-brand-50/60" : ""}`}
+                    >
+                      <td className="px-4 py-3 align-top">
+                        <input
+                          type="checkbox"
+                          checked={selectedProcedureIds.includes(proc.id)}
+                          onChange={() => toggleProcedureSelected(proc.id)}
+                          className="h-3.5 w-3.5 mt-1 rounded border-brand-300 text-brand-600 focus:ring-brand-400 cursor-pointer"
+                          aria-label={language === "ru" ? `Выбрать услугу ${proc.nameEn}` : `Select ${proc.nameEn}`}
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div>
+                          <input
+                            type="text"
+                            value={proc.nameEn}
+                            onChange={(e) => handleProcedureFieldChange(proc.id, "nameEn", e.target.value)}
+                            placeholder="English name"
+                            className="block w-full text-xs font-semibold text-brand-950 focus:outline-none border-b border-transparent hover:border-brand-300 py-1"
+                          />
+                          <div className="flex gap-2 mt-2">
                             <input
                               type="text"
                               value={proc.nameRu}
                               onChange={(e) => handleProcedureFieldChange(proc.id, "nameRu", e.target.value)}
-                              className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400"
+                              placeholder="Русский"
+                              className="flex-1 text-[11px] text-brand-600 focus:outline-none border-b border-transparent hover:border-brand-300 py-0.5"
                             />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-brand-500">Hungarian (HU)</label>
                             <input
                               type="text"
                               value={proc.nameHu}
                               onChange={(e) => handleProcedureFieldChange(proc.id, "nameHu", e.target.value)}
-                              className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400"
+                              placeholder="Magyar"
+                              className="flex-1 text-[11px] text-brand-600 focus:outline-none border-b border-transparent hover:border-brand-300 py-0.5"
                             />
                           </div>
                         </div>
-                      </div>
-
-                      {/* Pricing and Duration */}
-                      <div className="grid grid-cols-2 gap-4 border-b border-brand-100 pb-3">
-                        <div>
-                          <label className="block text-[10px] text-brand-500 font-bold">Price (HUF)</label>
-                          <input
-                            type="number"
-                            value={proc.price}
-                            onChange={(e) => handleProcedureFieldChange(proc.id, "price", parseFloat(e.target.value) || 0)}
-                            className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs font-semibold focus:outline-none focus:border-brand-400"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-brand-500 font-bold">Duration (Minutes)</label>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <input
+                          type="number"
+                          value={proc.price}
+                          onChange={(e) => handleProcedureFieldChange(proc.id, "price", parseFloat(e.target.value) || 0)}
+                          className="w-full text-xs font-bold text-brand-950 text-center focus:outline-none border-b border-transparent hover:border-brand-300 py-1"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
                           <input
                             type="number"
                             value={proc.durationMinutes}
                             onChange={(e) => handleProcedureFieldChange(proc.id, "durationMinutes", parseInt(e.target.value) || 0)}
-                            className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs font-semibold focus:outline-none focus:border-brand-400"
+                            className="w-16 text-xs font-bold text-brand-950 text-center focus:outline-none border-b border-transparent hover:border-brand-300 py-1"
                           />
+                          <span className="text-brand-500 text-[10px] font-semibold">
+                            {language === "ru" ? "мин" : language === "hu" ? "perc" : "min"}
+                          </span>
                         </div>
-                      </div>
-
-                      {/* Description Translations */}
-                      <div className="space-y-2">
-                        <p className="font-bold text-brand-800 uppercase tracking-wider text-[10px] flex items-center gap-1">
-                          <Globe className="h-3 w-3" /> Descriptions
-                        </p>
-                        <div>
-                          <label className="block text-[10px] text-brand-500">English (EN)</label>
-                          <textarea
-                            value={proc.descriptionEn}
-                            rows={2}
-                            onChange={(e) => handleProcedureFieldChange(proc.id, "descriptionEn", e.target.value)}
-                            className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400 resize-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-brand-500">Russian (RU)</label>
-                          <textarea
-                            value={proc.descriptionRu}
-                            rows={2}
-                            onChange={(e) => handleProcedureFieldChange(proc.id, "descriptionRu", e.target.value)}
-                            className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400 resize-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] text-brand-500">Hungarian (HU)</label>
-                          <textarea
-                            value={proc.descriptionHu}
-                            rows={2}
-                            onChange={(e) => handleProcedureFieldChange(proc.id, "descriptionHu", e.target.value)}
-                            className="mt-1 w-full rounded border border-brand-200 px-2 py-1 text-xs focus:outline-none focus:border-brand-400 resize-none"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    /* Simple preview */
-                    <div className="space-y-2">
-                      <div className="flex justify-between font-serif text-base text-brand-950 font-medium">
-                        <h4>{proc.nameEn} <span className="text-xs text-brand-400 font-sans block mt-1">{proc.nameRu} • {proc.nameHu}</span></h4>
-                        <span className="text-brand-500 font-bold font-sans text-sm whitespace-nowrap">
-                          {proc.price.toLocaleString(language === "hu" ? "hu-HU" : language === "ru" ? "ru-RU" : "en-US")} Ft
-                        </span>
-                      </div>
-                      <p className="text-xs text-brand-600 line-clamp-2 mt-2 leading-relaxed italic">
-                        "{proc.descriptionEn}"
-                      </p>
-                      <div className="text-[11px] font-semibold text-brand-500 bg-brand-50 p-1 px-2.5 rounded inline-block">
-                        ⏱ {proc.durationMinutes} {language === "ru" ? "мин" : language === "hu" ? "perc" : "min"}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={proc.isHidden || false}
+                          onChange={(e) => handleProcedureFieldChange(proc.id, "isHidden", e.target.checked)}
+                          className="h-4 w-4 rounded border-brand-300 text-brand-600 focus:ring-brand-400 cursor-pointer"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => {
+                            showConfirm(
+                              language === "ru" ? "Удаление услуги" : language === "hu" ? "Szolgáltatás törlése" : "Delete Service",
+                              language === "ru" ? `Удалить "${proc.nameEn}"? Это действие необратимо.` : language === "hu" ? `Biztosan töröljük a "${proc.nameEn}" szolgáltatást? Ez nem vonható vissza.` : `Delete "${proc.nameEn}"? This cannot be undone.`,
+                              () => handleDeleteProceduresNow([proc.id])
+                            );
+                          }}
+                          disabled={procDeletingIds.includes(proc.id)}
+                          className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-900 hover:bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200/40 transition-colors cursor-pointer font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">
+                            {procDeletingIds.includes(proc.id)
+                              ? (language === "ru" ? "Удаление..." : language === "hu" ? "Törlés..." : "Deleting...")
+                              : (language === "ru" ? "Удалить" : "Delete")}
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            
-            <div className="flex justify-end border-t border-brand-100 pt-4">
+
+            {/* Save Button */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <p className="text-[11px] text-brand-500 max-w-md leading-relaxed">
+                {language === "ru"
+                  ? "Удаление услуг происходит сразу. Кнопка ниже сохраняет только изменения названия, цены и длительности."
+                  : language === "hu"
+                    ? "A szolgáltatások törlése azonnal megtörténik. Az alábbi gomb csak a név, ár és időtartam módosításait menti."
+                    : "Deleting services happens immediately. The button below only saves changes to name, price and duration."}
+              </p>
               <button
                 onClick={handleSaveProcedures}
-                className="flex items-center gap-1.5 rounded-full bg-brand-500 px-6 py-3 text-xs font-bold text-white hover:bg-brand-600 transition-colors shadow-md cursor-pointer"
+                className="flex items-center gap-1.5 rounded-full bg-brand-500 hover:bg-brand-600 px-6 py-3 text-xs font-bold text-white transition-colors shadow-md cursor-pointer shrink-0"
               >
                 <Save className="h-4 w-4" />
-                <span>{language === "ru" ? "Сохранить все изменения услуг" : "Save All Changes"}</span>
+                <span>{language === "ru" ? "Сохранить все изменения" : language === "hu" ? "Minden módosítás mentése" : "Save All Changes"}</span>
               </button>
             </div>
           </motion.div>
@@ -1457,16 +1543,19 @@ Status: ${booking.status.toUpperCase()}
             className="mt-6 bg-white border border-brand-200/50 rounded-2xl p-6 shadow-sm max-w-3xl mx-auto space-y-6"
           >
             <div className="flex items-center justify-between border-b border-brand-100 pb-4">
-              <div>
-                <h3 className="font-serif text-xl font-medium text-brand-950">{language === "ru" ? "Контакты и данные салона" : "Salon Contact Details"}</h3>
-                <p className="text-xs text-brand-500 mt-1">{language === "ru" ? "Измените адрес, телефоны, график и карту для Будапешта." : "Configure Budapest branch phone numbers, address and interactive map."}</p>
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-brand-50 flex items-center justify-center"><MapPin className="h-5 w-5 text-brand-500" /></div>
+                <div>
+                  <h3 className="font-serif text-xl font-medium text-brand-950">{language === "ru" ? "Контакты и данные салона" : language === "hu" ? "Elérhetőségek és szalon adatok" : "Salon Contact Details"}</h3>
+                  <p className="text-xs text-brand-500 mt-1">{language === "ru" ? "Измените адрес, телефоны, график и карту для Будапешта." : language === "hu" ? "Módosítsa a budapesti címét, telefonszámait, nyitvatartását és térképét." : "Configure Budapest branch phone numbers, address and interactive map."}</p>
+                </div>
               </div>
               <button
                 onClick={handleSaveContacts}
                 className="flex items-center gap-1.5 rounded-full bg-brand-500 px-5 py-2 text-xs font-bold text-white hover:bg-brand-600 transition-colors shadow-sm cursor-pointer"
               >
                 <Save className="h-3.5 w-3.5" />
-                <span>{language === "ru" ? "Сохранить" : "Save Info"}</span>
+                <span>{language === "ru" ? "Сохранить" : language === "hu" ? "Mentés" : "Save Info"}</span>
               </button>
             </div>
 
@@ -1574,7 +1663,7 @@ Status: ${booking.status.toUpperCase()}
                 className="flex items-center gap-1.5 rounded-full bg-brand-500 px-6 py-3 text-xs font-bold text-white hover:bg-brand-600 transition-colors shadow-md cursor-pointer"
               >
                 <Save className="h-4 w-4" />
-                <span>{language === "ru" ? "Сохранить контактные данные" : "Save Contact Information"}</span>
+                <span>{language === "ru" ? "Сохранить контактные данные" : language === "hu" ? "Elérhetőségek mentése" : "Save Contact Information"}</span>
               </button>
             </div>
           </motion.div>

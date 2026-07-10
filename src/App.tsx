@@ -87,7 +87,11 @@ export default function App() {
       const res = await fetch("/api/procedures");
       if (res.ok) {
         const data = await res.json();
-        setProcedures(data);
+        const normalizedProcedures = data.map((p: Procedure) => ({
+          ...p,
+          isHidden: p.isHidden ?? false,
+        }));
+        setProcedures(normalizedProcedures);
       }
     } catch (err) {
       console.error("Error fetching procedures:", err);
@@ -312,12 +316,54 @@ export default function App() {
         body: JSON.stringify({ procedures: updatedProcedures }),
       });
 
-      if (!res.ok) throw new Error("Failed to update procedures");
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to update procedures");
+      }
       
       const saved = await res.json();
-      setProcedures(saved);
+      // Нормализуем ответ (на всякий случай)
+      const normalizedSaved = saved.map((p: Procedure) => ({
+        ...p,
+        isHidden: p.isHidden ?? false,
+      }));
+      setProcedures(normalizedSaved);
+      console.log("📦 Процедуры в App после сохранения:", normalizedSaved);
+      return normalizedSaved; // ← важно: возвращаем для AdminPanel
     } catch (err) {
       console.error(err);
+      throw err;
+    }
+  };
+
+  // Delete Procedures Handler (Admin)
+  const handleDeleteProcedures = async (ids: string[]) => {
+    try {
+      const res = await fetch(`/api/procedures`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+
+      const responseData = await res.json();
+
+      if (!res.ok) {
+        const err = new Error(responseData.error || "Failed to delete procedures");
+        (err as any).deleted = responseData.deleted;
+        (err as any).blocked = responseData.blocked;
+        
+        if (responseData.deleted && responseData.deleted.length > 0) {
+          setProcedures((prev) => prev.filter((p) => !responseData.deleted.includes(p.id)));
+        }
+        
+        throw err;
+      }
+      
+      setProcedures((prev) => prev.filter((p) => !ids.includes(p.id)));
+
+    } catch (err) {
+      console.error("Error deleting procedures:", err);
+      // Re-throw for the AdminPanel to handle its UI state
       throw err;
     }
   };
@@ -419,7 +465,6 @@ export default function App() {
                     className="mt-1 w-full rounded-lg border border-brand-200 bg-brand-50/20 px-3.5 py-2.5 text-sm focus:border-brand-400 focus:outline-none"
                   />
                 </div>
-                
                 <button
                   type="submit"
                   className="w-full rounded-full bg-brand-500 hover:bg-brand-600 text-white py-3 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1 shadow"
@@ -455,6 +500,7 @@ export default function App() {
                 onDeleteBooking={handleDeleteBooking}
                 onAddBooking={handleAddBooking}
                 onUpdateProcedures={handleUpdateProcedures}
+                onDeleteProcedures={handleDeleteProcedures}
                 onUpdateContacts={handleUpdateContacts}
                 onLogout={handleAdminLogout}
               />
