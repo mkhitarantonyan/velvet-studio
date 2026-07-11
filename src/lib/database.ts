@@ -1,9 +1,9 @@
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { Pool } from "pg";
 import { Booking, Procedure, SalonContacts } from "../types";
 import fs from "fs";
 import path from "path";
 
-let supabaseClient: SupabaseClient | null = null;
+let pool: Pool | null = null;
 
 /**
  * Persist JSON fallback data without leaving a partially-written file behind if
@@ -21,36 +21,32 @@ function writeJsonAtomically(filePath: string, value: unknown): void {
 }
 
 /**
- * Checks if Supabase credentials are validly provided in the environment.
+ * Checks if the database is configured via environment variables.
  */
-export function isSupabaseConfigured(): boolean {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-  return !!(url && key && !url.includes("your-project") && !key.includes("your-anon-key"));
+export function isDbConfigured(): boolean {
+  return !!process.env.DATABASE_URL;
 }
 
 /**
- * Lazy initialization of Supabase client.
- * Throws configuration errors if keys are missing but isSupabaseConfigured was expected.
+ * Lazy initialization of the PostgreSQL connection pool.
  */
-export function getSupabaseClient(): SupabaseClient {
-  if (supabaseClient) return supabaseClient;
+function getPool(): Pool {
+  if (pool) return pool;
 
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-
-  if (!url || !key || url.includes("your-project") || key.includes("your-anon-key")) {
+  if (!process.env.DATABASE_URL) {
     throw new Error(
-      "❌ CRITICAL CONFIGURATION ERROR: Supabase database variables are not configured correctly in .env. " +
-      "Application requires SUPABASE_URL and either SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY to function."
+      "❌ CRITICAL CONFIGURATION ERROR: DATABASE_URL is not configured in .env. " +
+      "The application requires a PostgreSQL connection string to function."
     );
   }
 
   try {
-    supabaseClient = createClient(url, key);
-    return supabaseClient;
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+    return pool;
   } catch (error) {
-    console.error("❌ CRITICAL: Failed to initialize Supabase client:", error);
+    console.error("❌ CRITICAL: Failed to initialize PostgreSQL connection pool:", error);
     throw error;
   }
 }
@@ -70,8 +66,8 @@ function normalizeProcedure(p: any): Procedure {
  * 1. Bookings CRUD operations (supporting local file fallback)
  */
 export async function loadBookings(): Promise<Booking[]> {
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Loading bookings from local file 'bookings.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Loading bookings from local file 'bookings.json'.");
     const filePath = path.join(process.cwd(), "bookings.json");
     try {
       if (fs.existsSync(filePath)) {
@@ -111,54 +107,51 @@ export async function loadBookings(): Promise<Booking[]> {
     return [];
   }
 
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from("bookings")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const client = getPool();
+  try {
+    const { rows } = await client.query("SELECT * FROM bookings ORDER BY created_at DESC");
 
-  if (error) {
-    console.error("Error fetching bookings from Supabase:", error);
+    return (rows || []).map((b): Booking => {
+      const commentStr = b.comment || "";
+      let procedureIds = (Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0)
+        ? b.procedure_ids
+        : (b.procedure_id ? [b.procedure_id] : []);
+
+      let cleanComment = commentStr;
+
+      // Graceful fallback for older records without native procedure_ids array
+      if (!b.procedure_ids || b.procedure_ids.length === 0) {
+        const match = commentStr.match(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i);
+        if (match) {
+          procedureIds = match[1].split(",").filter(Boolean);
+          cleanComment = commentStr.replace(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i, "").trim();
+        }
+      }
+      let email = "";
+      const emailMatch = cleanComment.match(/\[email:\s*([^\]\s]+)\]/i);
+      if (emailMatch) {
+        email = emailMatch[1];
+        cleanComment = cleanComment.replace(/\[email:\s*([^\]\s]+)\]/i, "").trim();
+      }
+      return {
+        id: String(b.id),
+        firstName: b.first_name,
+        lastName: b.last_name,
+        phone: b.phone,
+        email: email || undefined,
+        procedureId: b.procedure_id,
+        procedureIds,
+        date: b.booking_date, // PostgreSQL DATE
+        time: b.booking_time ? b.booking_time.substring(0, 5) : "", // Trims HH:MM:SS to HH:MM for client inputs
+        comment: cleanComment,
+        status: b.status as 'pending' | 'confirmed' | 'cancelled',
+        createdAt: b.created_at,
+      };
+    });
+  } catch (error) {
+    console.error("Error fetching bookings from PostgreSQL:", error);
     throw error;
   }
-
-  return (data || []).map((b): Booking => {
-    const commentStr = b.comment || "";
-    let procedureIds = (Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0)
-      ? b.procedure_ids
-      : (b.procedure_id ? [b.procedure_id] : []);
-
-    let cleanComment = commentStr;
-
-    // Graceful fallback for older records without native procedure_ids array
-    if (!b.procedure_ids || b.procedure_ids.length === 0) {
-      const match = commentStr.match(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i);
-      if (match) {
-        procedureIds = match[1].split(",").filter(Boolean);
-        cleanComment = commentStr.replace(/\[procedures:\s*([a-f0-9\-a-zA-Z0-9_,]+)\]/i, "").trim();
-      }
-    }
-    let email = "";
-    const emailMatch = cleanComment.match(/\[email:\s*([^\]\s]+)\]/i);
-    if (emailMatch) {
-      email = emailMatch[1];
-      cleanComment = cleanComment.replace(/\[email:\s*([^\]\s]+)\]/i, "").trim();
-    }
-    return {
-      id: String(b.id),
-      firstName: b.first_name,
-      lastName: b.last_name,
-      phone: b.phone,
-      email: email || undefined,
-      procedureId: b.procedure_id,
-      procedureIds,
-      date: b.booking_date, // PostgreSQL DATE
-      time: b.booking_time ? b.booking_time.substring(0, 5) : "", // Trims HH:MM:SS to HH:MM for client inputs
-      comment: cleanComment,
-      status: b.status as 'pending' | 'confirmed' | 'cancelled',
-      createdAt: b.created_at,
-    };
-  });
 }
 
 export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | "status">): Promise<Booking> {
@@ -166,8 +159,8 @@ export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | 
     ? booking.procedureIds 
     : [booking.procedureId];
 
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Creating booking in local file 'bookings.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Creating booking in local file 'bookings.json'.");
     const filePath = path.join(process.cwd(), "bookings.json");
     let currentBookings: Booking[] = [];
     try {
@@ -208,47 +201,50 @@ export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | 
     ? `${booking.comment.trim()}\n${serializedMeta}`
     : serializedMeta;
 
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from("bookings")
-    .insert({
-      first_name: booking.firstName,
-      last_name: booking.lastName,
-      phone: booking.phone,
-      procedure_id: booking.procedureId, // Strict Foreign Key UUID reference
-      procedure_ids: pIds, // Native array array
-      booking_date: booking.date,         // Safe DATE mapping
-      booking_time: booking.time,         // Safe TIME mapping
-      comment: finalComment,
-      status: "pending",
-    })
-    .select()
-    .single();
+  const client = getPool();
+  const query = `
+    INSERT INTO bookings (first_name, last_name, phone, procedure_id, procedure_ids, booking_date, booking_time, comment, status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+    RETURNING *;
+  `;
+  const values = [
+    booking.firstName,
+    booking.lastName,
+    booking.phone,
+    booking.procedureId,
+    pIds,
+    booking.date,
+    booking.time,
+    finalComment,
+  ];
 
-  if (error) {
-    console.error("Error creating booking in Supabase:", error);
+  try {
+    const { rows } = await client.query(query, values);
+    const data = rows[0];
+
+    return {
+      id: String(data.id),
+      firstName: data.first_name,
+      lastName: data.last_name,
+      phone: data.phone,
+      email: booking.email,
+      procedureId: data.procedure_id,
+      procedureIds: pIds,
+      date: data.booking_date,
+      time: data.booking_time ? data.booking_time.substring(0, 5) : "",
+      comment: booking.comment || "",
+      status: data.status as 'pending' | 'confirmed' | 'cancelled',
+      createdAt: data.created_at,
+    };
+  } catch (error) {
+    console.error("Error creating booking in PostgreSQL:", error);
     throw error;
   }
-
-  return {
-    id: String(data.id),
-    firstName: data.first_name,
-    lastName: data.last_name,
-    phone: data.phone,
-    email: booking.email,
-    procedureId: data.procedure_id,
-    procedureIds: pIds,
-    date: data.booking_date,
-    time: data.booking_time ? data.booking_time.substring(0, 5) : "",
-    comment: booking.comment || "",
-    status: data.status as 'pending' | 'confirmed' | 'cancelled',
-    createdAt: data.created_at,
-  };
 }
 
 export async function updateBookingStatus(id: string, status: "pending" | "confirmed" | "cancelled"): Promise<Booking | null> {
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Updating booking status in local file 'bookings.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Updating booking status in local file 'bookings.json'.");
     const filePath = path.join(process.cwd(), "bookings.json");
     let currentBookings: Booking[] = [];
     try {
@@ -275,49 +271,49 @@ export async function updateBookingStatus(id: string, status: "pending" | "confi
     return currentBookings[index];
   }
 
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from("bookings")
-    .update({ status })
-    .eq("id", id)
-    .select();
+  const client = getPool();
+  try {
+    const { rows } = await client.query(
+      "UPDATE bookings SET status = $1 WHERE id = $2::uuid RETURNING *",
+      [status, id],
+    );
 
-  if (error) {
-    console.error("Error updating booking status in Supabase:", error);
+    if (rows.length === 0) return null;
+
+    const b = rows[0];
+    let comment = b.comment || "";
+    let email: string | undefined;
+    const emailMatch = comment.match(/\[email:\s*([^\]\s]+)\]/i);
+    if (emailMatch) {
+      email = emailMatch[1];
+      comment = comment.replace(/\[email:\s*([^\]\s]+)\]/i, "").trim();
+    }
+    const procedureIds = Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0
+      ? b.procedure_ids
+      : (b.procedure_id ? [b.procedure_id] : []);
+    return {
+      id: String(b.id),
+      firstName: b.first_name,
+      lastName: b.last_name,
+      phone: b.phone,
+      email,
+      procedureId: b.procedure_id,
+      procedureIds,
+      date: b.booking_date,
+      time: b.booking_time ? b.booking_time.substring(0, 5) : "",
+      comment,
+      status: b.status as 'pending' | 'confirmed' | 'cancelled',
+      createdAt: b.created_at,
+    };
+  } catch (error) {
+    console.error("Error updating booking status in PostgreSQL:", error);
     throw error;
   }
-
-  if (!data || data.length === 0) return null;
-  const b = data[0];
-  let comment = b.comment || "";
-  let email: string | undefined;
-  const emailMatch = comment.match(/\[email:\s*([^\]\s]+)\]/i);
-  if (emailMatch) {
-    email = emailMatch[1];
-    comment = comment.replace(/\[email:\s*([^\]\s]+)\]/i, "").trim();
-  }
-  const procedureIds = Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0
-    ? b.procedure_ids
-    : (b.procedure_id ? [b.procedure_id] : []);
-  return {
-    id: String(b.id),
-    firstName: b.first_name,
-    lastName: b.last_name,
-    phone: b.phone,
-    email,
-    procedureId: b.procedure_id,
-    procedureIds,
-    date: b.booking_date,
-    time: b.booking_time ? b.booking_time.substring(0, 5) : "",
-    comment,
-    status: b.status as 'pending' | 'confirmed' | 'cancelled',
-    createdAt: b.created_at,
-  };
 }
 
 export async function deleteBooking(id: string): Promise<boolean> {
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Deleting booking from local file 'bookings.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Deleting booking from local file 'bookings.json'.");
     const filePath = path.join(process.cwd(), "bookings.json");
     let currentBookings: Booking[] = [];
     try {
@@ -342,23 +338,14 @@ export async function deleteBooking(id: string): Promise<boolean> {
     return true;
   }
 
-  const client = getSupabaseClient();
-  
-  // To prevent errors if the database ID column is integer/bigint vs string/UUID:
-  const parsedId = parseInt(id, 10);
-  if (!isNaN(parsedId) && String(parsedId) === String(id)) {
-    // Attempt deleting as integer first
-    const { error: intError } = await client.from("bookings").delete().eq("id", parsedId);
-    if (!intError) return true;
-  }
-
-  // Fallback to deleting as original string
-  const { error } = await client.from("bookings").delete().eq("id", id);
-  if (error) {
-    console.error("Error deleting booking from Supabase:", error);
+  const client = getPool();
+  try {
+    const result = await client.query("DELETE FROM bookings WHERE id = $1::uuid", [id]);
+    return (result.rowCount ?? 0) > 0;
+  } catch (error) {
+    console.error("Error deleting booking from PostgreSQL:", error);
     throw error;
   }
-  return true;
 }
 
 /**
@@ -437,8 +424,8 @@ const DEFAULT_PROCEDURES: Procedure[] = [
  * 2. Procedures CRUD operations
  */
 export async function loadProcedures(): Promise<Procedure[]> {
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Loading procedures from local file 'procedures.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Loading procedures from local file 'procedures.json'.");
     const filePath = path.join(process.cwd(), "procedures.json");
     try {
       if (fs.existsSync(filePath)) {
@@ -460,37 +447,38 @@ export async function loadProcedures(): Promise<Procedure[]> {
     return DEFAULT_PROCEDURES.map(normalizeProcedure);
   }
 
-  const client = getSupabaseClient();
-  const { data, error } = await client.from("procedures").select("*");
-  if (error) {
-    console.error("Error fetching procedures from Supabase:", error);
+  const client = getPool();
+  try {
+    const { rows } = await client.query("SELECT * FROM procedures");
+
+    if (rows.length === 0) {
+      await saveProcedures(DEFAULT_PROCEDURES);
+      return DEFAULT_PROCEDURES.map(normalizeProcedure);
+    }
+
+    return rows.map((p): Procedure => normalizeProcedure({
+      id: String(p.id),
+      nameEn: p.name_en,
+      nameRu: p.name_ru,
+      nameHu: p.name_hu,
+      price: Number(p.price),
+      durationMinutes: Number(p.duration_minutes),
+      descriptionEn: p.description_en || "",
+      descriptionRu: p.description_ru || "",
+      descriptionHu: p.description_hu || "",
+      isHidden: p.is_hidden,
+    }));
+  } catch (error) {
+    console.error("Error fetching procedures from PostgreSQL:", error);
     throw error;
   }
-
-  if (!data || data.length === 0) {
-    await saveProcedures(DEFAULT_PROCEDURES);
-    return DEFAULT_PROCEDURES.map(normalizeProcedure);
-  }
-
-  return data.map((p): Procedure => normalizeProcedure({
-    id: String(p.id),
-    nameEn: p.name_en,
-    nameRu: p.name_ru,
-    nameHu: p.name_hu,
-    price: Number(p.price),
-    durationMinutes: Number(p.duration_minutes),
-    descriptionEn: p.description_en || "",
-    descriptionRu: p.description_ru || "",
-    descriptionHu: p.description_hu || "",
-    isHidden: p.is_hidden,
-  }));
 }
 
 export async function saveProcedures(procedures: Procedure[]): Promise<void> {
   const normalizedProcedures = procedures.map(normalizeProcedure);
 
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Saving procedures to local file 'procedures.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Saving procedures to local file 'procedures.json'.");
     const filePath = path.join(process.cwd(), "procedures.json");
     try {
       writeJsonAtomically(filePath, normalizedProcedures);
@@ -501,50 +489,52 @@ export async function saveProcedures(procedures: Procedure[]): Promise<void> {
     return;
   }
 
-  const client = getSupabaseClient();
+  const client = getPool();
+  const pgClient = await client.connect();
+  try {
+    await pgClient.query('BEGIN');
 
-  // `upsert` below only inserts new rows / updates existing ones — it never removes
-  // rows that are missing from the payload. Without this step, a procedure deleted
-  // in the admin panel (and no longer present in `procedures`) would stay in the
-  // database forever and reappear after every reload. So we first diff against
-  // what's actually in the table and explicitly delete anything that's gone missing.
-  const { data: existingRows, error: fetchError } = await client.from("procedures").select("id");
-  if (fetchError) {
-    console.error("Error fetching existing procedure ids from Supabase:", fetchError);
-    throw fetchError;
-  }
-  const incomingIds = new Set(normalizedProcedures.map((p) => String(p.id)));
-  const idsToRemove = (existingRows || [])
-    .map((row: any) => String(row.id))
-    .filter((id: string) => !incomingIds.has(id));
+    const { rows: existingRows } = await pgClient.query("SELECT id FROM procedures");
+    const incomingIds = new Set(normalizedProcedures.map((p) => String(p.id)));
+    const idsToRemove = (existingRows || [])
+      .map((row: any) => String(row.id))
+      .filter((id: string) => !incomingIds.has(id));
 
-  if (idsToRemove.length > 0) {
-    const { error: deleteError } = await client.from("procedures").delete().in("id", idsToRemove);
-    if (deleteError) {
-      console.error("Error removing deleted procedures from Supabase:", deleteError);
-      throw deleteError;
+    if (idsToRemove.length > 0) {
+      await pgClient.query("DELETE FROM procedures WHERE id = ANY($1::uuid[])", [idsToRemove]);
     }
-  }
 
-  const mapped = normalizedProcedures.map((p) => ({
-    id: p.id,
-    name_en: p.nameEn,
-    name_ru: p.nameRu,
-    name_hu: p.nameHu,
-    price: p.price,
-    duration_minutes: p.durationMinutes,
-    description_en: p.descriptionEn,
-    description_ru: p.descriptionRu,
-    description_hu: p.descriptionHu,
-    is_hidden: p.isHidden,
-  }));
-
-  if (mapped.length > 0) {
-    const { error } = await client.from("procedures").upsert(mapped);
-    if (error) {
-      console.error("Error saving procedures to Supabase:", error);
-      throw error;
+    if (normalizedProcedures.length > 0) {
+      const upsertQuery = `
+        INSERT INTO procedures (id, name_en, name_ru, name_hu, price, duration_minutes, description_en, description_ru, description_hu, is_hidden)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (id) DO UPDATE SET
+          name_en = EXCLUDED.name_en,
+          name_ru = EXCLUDED.name_ru,
+          name_hu = EXCLUDED.name_hu,
+          price = EXCLUDED.price,
+          duration_minutes = EXCLUDED.duration_minutes,
+          description_en = EXCLUDED.description_en,
+          description_ru = EXCLUDED.description_ru,
+          description_hu = EXCLUDED.description_hu,
+          is_hidden = EXCLUDED.is_hidden;
+      `;
+      for (const p of normalizedProcedures) {
+        const values = [
+          p.id, p.nameEn, p.nameRu, p.nameHu, p.price, p.durationMinutes,
+          p.descriptionEn, p.descriptionRu, p.descriptionHu, p.isHidden
+        ];
+        await pgClient.query(upsertQuery, values);
+      }
     }
+
+    await pgClient.query('COMMIT');
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    console.error("Error saving procedures to PostgreSQL:", error);
+    throw error;
+  } finally {
+    pgClient.release();
   }
 }
 
@@ -562,8 +552,8 @@ export async function deleteProcedures(ids: string[]): Promise<{ deleted: string
   const uniqueIds = Array.from(new Set(ids.map(String)));
   if (uniqueIds.length === 0) return { deleted: [], blocked: [] };
 
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Deleting procedures from local file 'procedures.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Deleting procedures from local file 'procedures.json'.");
     const filePath = path.join(process.cwd(), "procedures.json");
     let current: Procedure[] = [];
     try {
@@ -585,29 +575,27 @@ export async function deleteProcedures(ids: string[]): Promise<{ deleted: string
     return { deleted, blocked: [] };
   }
 
-  const client = getSupabaseClient();
-  const { error } = await client.from("procedures").delete().in("id", uniqueIds);
-
-  if (!error) {
+  const client = getPool();
+  try {
+    await client.query("DELETE FROM procedures WHERE id = ANY($1::uuid[])", [uniqueIds]);
     return { deleted: uniqueIds, blocked: [] };
-  }
-
-  // Bulk delete failed — most likely a foreign key violation because one of the
-  // selected services is still referenced by an existing booking. Retry one by one
-  // so everything that CAN be deleted still gets deleted.
-  console.warn("Bulk procedure delete failed, retrying individually:", error.message);
-  const deleted: string[] = [];
-  const blocked: string[] = [];
-  for (const id of uniqueIds) {
-    const { error: singleError } = await client.from("procedures").delete().eq("id", id);
-    if (singleError) {
-      console.error(`Could not delete procedure ${id}:`, singleError.message);
-      blocked.push(id);
-    } else {
-      deleted.push(id);
+  } catch (error: any) {
+    // Bulk delete failed — most likely a foreign key violation.
+    // Retry one by one.
+    console.warn("Bulk procedure delete failed, retrying individually:", error.message);
+    const deleted: string[] = [];
+    const blocked: string[] = [];
+    for (const id of uniqueIds) {
+      try {
+        await client.query("DELETE FROM procedures WHERE id = $1", [id]);
+        deleted.push(id);
+      } catch (singleError: any) {
+        console.error(`Could not delete procedure ${id}:`, singleError.message);
+        blocked.push(id);
+      }
     }
+    return { deleted, blocked };
   }
-  return { deleted, blocked };
 }
 
 /**
@@ -628,8 +616,8 @@ export async function loadContacts(): Promise<SalonContacts> {
     workingHoursHu: "Naponta 10:00 és 20:00 között"
   };
 
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Loading contacts from local file 'contacts.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Loading contacts from local file 'contacts.json'.");
     const filePath = path.join(process.cwd(), "contacts.json");
     try {
       if (fs.existsSync(filePath)) {
@@ -647,40 +635,36 @@ export async function loadContacts(): Promise<SalonContacts> {
     return initialContacts;
   }
 
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from("contacts")
-    .select("*")
-    .eq("id", "main")
-    .single();
-
-  if (error) {
-    if (error.code === "PGRST116") {
+  const client = getPool();
+  try {
+    const { rows } = await client.query("SELECT * FROM contacts WHERE id = 'main'");
+    if (rows.length === 0) {
       await saveContacts(initialContacts);
       return initialContacts;
     }
-    console.error("Error fetching contacts from Supabase:", error);
+    const data = rows[0];
+    return {
+      phone1: data.phone1,
+      phone2: data.phone2 || "",
+      email: data.email,
+      instagram: data.instagram || "",
+      mapUrl: data.map_url || "",
+      addressEn: data.address_en || "",
+      addressRu: data.address_ru || "",
+      addressHu: data.address_hu || "",
+      workingHoursEn: data.working_hours_en || "",
+      workingHoursRu: data.working_hours_ru || "",
+      workingHoursHu: data.working_hours_hu || "",
+    };
+  } catch (error) {
+    console.error("Error fetching contacts from PostgreSQL:", error);
     throw error;
   }
-
-  return {
-    phone1: data.phone1,
-    phone2: data.phone2 || "",
-    email: data.email,
-    instagram: data.instagram || "",
-    mapUrl: data.map_url || "",
-    addressEn: data.address_en || "",
-    addressRu: data.address_ru || "",
-    addressHu: data.address_hu || "",
-    workingHoursEn: data.working_hours_en || "",
-    workingHoursRu: data.working_hours_ru || "",
-    workingHoursHu: data.working_hours_hu || "",
-  };
 }
 
 export async function saveContacts(contacts: SalonContacts): Promise<void> {
-  if (!isSupabaseConfigured()) {
-    console.warn("⚠️ Supabase is not configured. Saving contacts to local file 'contacts.json'.");
+  if (!isDbConfigured()) {
+    console.warn("⚠️ Database is not configured. Saving contacts to local file 'contacts.json'.");
     const filePath = path.join(process.cwd(), "contacts.json");
     try {
       writeJsonAtomically(filePath, contacts);
@@ -691,25 +675,42 @@ export async function saveContacts(contacts: SalonContacts): Promise<void> {
     return;
   }
 
-  const client = getSupabaseClient();
-  const { error } = await client.from("contacts").upsert({
-    id: "main",
-    phone1: contacts.phone1,
-    phone2: contacts.phone2 || null,
-    email: contacts.email,
-    instagram: contacts.instagram || null,
-    map_url: contacts.mapUrl || null,
-    address_en: contacts.addressEn,
-    address_ru: contacts.addressRu,
-    address_hu: contacts.addressHu,
-    working_hours_en: contacts.workingHoursEn,
-    working_hours_ru: contacts.workingHoursRu,
-    working_hours_hu: contacts.workingHoursHu,
-    updated_at: new Date().toISOString(),
-  });
+  const client = getPool();
+  const query = `
+    INSERT INTO contacts (id, phone1, phone2, email, instagram, map_url, address_en, address_ru, address_hu, working_hours_en, working_hours_ru, working_hours_hu, updated_at)
+    VALUES ('main', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      phone1 = EXCLUDED.phone1,
+      phone2 = EXCLUDED.phone2,
+      email = EXCLUDED.email,
+      instagram = EXCLUDED.instagram,
+      map_url = EXCLUDED.map_url,
+      address_en = EXCLUDED.address_en,
+      address_ru = EXCLUDED.address_ru,
+      address_hu = EXCLUDED.address_hu,
+      working_hours_en = EXCLUDED.working_hours_en,
+      working_hours_ru = EXCLUDED.working_hours_ru,
+      working_hours_hu = EXCLUDED.working_hours_hu,
+      updated_at = NOW();
+  `;
+  const values = [
+    contacts.phone1,
+    contacts.phone2 || null,
+    contacts.email,
+    contacts.instagram || null,
+    contacts.mapUrl || null,
+    contacts.addressEn,
+    contacts.addressRu,
+    contacts.addressHu,
+    contacts.workingHoursEn,
+    contacts.workingHoursRu,
+    contacts.workingHoursHu,
+  ];
 
-  if (error) {
-    console.error("Error saving contacts to Supabase:", error);
+  try {
+    await client.query(query, values);
+  } catch (error) {
+    console.error("Error saving contacts to PostgreSQL:", error);
     throw error;
   }
 }

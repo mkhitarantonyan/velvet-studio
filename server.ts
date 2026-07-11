@@ -23,8 +23,6 @@ import {
   saveProcedures,
   loadContacts,
   saveContacts,
-  getSupabaseClient,
-  isSupabaseConfigured
 } from "./src/lib/database";
 import helmet from "helmet";
 import { z } from "zod";
@@ -39,7 +37,7 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "https:"],
       scriptSrc: ["'self'", "'unsafe-inline'"], // Needed for React inline scripts in production
       styleSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'", "https://api.supabase.co"] // If direct supabase calls exist from client
+      connectSrc: ["'self'"] // If direct supabase calls exist from client
     }
   } : false,
   crossOriginEmbedderPolicy: false // Allows loading images from other origins like google maps
@@ -926,64 +924,6 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
     }
 
     const totalDurationMinutes = requestedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
-
-    if (isSupabaseConfigured()) {
-      // Attempt DB-Level Atomic RPC function first (Gives complete database-enforced race condition immunity)
-      try {
-        const emailTag = `[email:${cleanEmail}]`;
-        const finalRpcComment = cleanComment 
-          ? `${cleanComment}\n${emailTag}`
-          : `${emailTag}`;
-
-        const client = getSupabaseClient();
-        const { data: rpcData, error: rpcError } = await client.rpc("create_booking_safely", {
-          p_first_name: cleanFirstName,
-          p_last_name: cleanLastName,
-          p_phone: cleanPhone,
-          p_procedure_ids: actualProcedureIds,
-          p_total_duration_minutes: totalDurationMinutes,
-          p_booking_date: date,
-          p_booking_time: time,
-          p_comment: finalRpcComment
-        });
-
-        if (!rpcError && rpcData) {
-          if (rpcData.success === false) {
-            console.warn(`[DOUBLE BOOKING PREVENTED] Database conflict. Time: ${requestReceivedAt}.`);
-
-            return res.status(409).json({ error: rpcData.error || "Time slot is already occupied." });
-          }
-          
-          const newBooking = {
-            id: String(rpcData.id),
-            firstName: rpcData.first_name,
-            lastName: rpcData.last_name,
-            phone: rpcData.phone,
-            email: cleanEmail,
-            procedureId: actualProcedureIds[0], // fallback for older clients
-            procedureIds: rpcData.procedure_ids || actualProcedureIds,
-            date: rpcData.booking_date,
-            time: rpcData.booking_time ? rpcData.booking_time.substring(0, 5) : "",
-            comment: cleanComment,
-            status: rpcData.status,
-            createdAt: rpcData.created_at
-          };
-
-          console.log(`[BOOKING SUCCESS - DB RPC] Booking created. ID: ${newBooking.id}.`);
-          sendAdminEmailNotification(newBooking).catch(console.error);
-          sendEmailNotification(newBooking, "created").catch(console.error);
-          return res.status(201).json(newBooking);
-        } else if (rpcError) {
-          throw rpcError;
-        }
-      } catch (rpcErr: any) {
-        // Gracefully log and fall back if RPC function is missing on Supabase instance
-        console.warn(`⚠️ Database-level 'create_booking_safely' function failed/not found. Error: ${rpcErr?.message || rpcErr}. Falling back to high-fidelity server-side validation.`);
-      }
-    }
-
-    // FALLBACK: State-of-the-art server-side Luxon validation (Budapest local timezone parsed to absolute global milliseconds)
-    // We already have `procedures`, `requestedProcs`, and `totalDurationMinutes` computed above.
 
     // Convert local Budapest input to absolute Unix time
     if (typeof date !== "string" || typeof time !== "string" ||
