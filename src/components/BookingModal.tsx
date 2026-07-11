@@ -14,6 +14,12 @@ interface BookingModalProps {
 
 export default function BookingModal({ isOpen, onClose, preselectedProcedure, onBookingSuccess, procedures }: BookingModalProps) {
   const { language, t, formatPrice } = useLanguage();
+  // Hidden services stay visible to the administrator but must never be offered
+  // in the public booking flow.
+  const bookableProcedures = useMemo(
+    () => procedures.filter((procedure) => !procedure.isHidden),
+    [procedures]
+  );
   
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -37,11 +43,14 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
     if (preselectedProcedure) {
       setProcedure(preselectedProcedure);
       setSelectedProcedures([preselectedProcedure]);
-    } else if (procedures && procedures.length > 0) {
-      setProcedure(procedures[0].id); // Default to first available ID
-      setSelectedProcedures([procedures[0].id]);
+    } else if (bookableProcedures.length > 0) {
+      setProcedure(bookableProcedures[0].id); // Default to first visible service
+      setSelectedProcedures([bookableProcedures[0].id]);
+    } else {
+      setProcedure("");
+      setSelectedProcedures([]);
     }
-  }, [preselectedProcedure, isOpen, procedures]);
+  }, [preselectedProcedure, isOpen, bookableProcedures]);
 
   // Set default date to tomorrow
   useEffect(() => {
@@ -84,10 +93,10 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
 
   // Dynamically compute available slots for the selected procedures and date
   const availableSlots = useMemo(() => {
-    if (!date || !selectedProcedures.length || !procedures.length) return [];
+    if (!date || !selectedProcedures.length || !bookableProcedures.length) return [];
     
     // Sum of duration of all selected procedures
-    const duration = procedures
+    const duration = bookableProcedures
       .filter((p) => selectedProcedures.includes(p.id))
       .reduce((sum, p) => sum + p.durationMinutes, 0);
 
@@ -97,7 +106,7 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
     };
 
     const startMins = 10 * 60; // 10:00 (Salon opening)
-    const endMins = 22 * 60;   // 22:00 (Salon closing)
+    const endMins = 20 * 60;   // 20:00 (Salon closing)
     const interval = 15;       // 15 minute steps
 
     const candidates: string[] = [];
@@ -142,7 +151,7 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
     }
 
     return candidates;
-  }, [date, selectedProcedures, busySlots, procedures]);
+  }, [date, selectedProcedures, busySlots, bookableProcedures]);
 
   // Auto-select first available slot when slots load or change
   useEffect(() => {
@@ -501,7 +510,7 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
                         {t("bookingLabelProcedure")} ({t({ ru: "можно выбрать несколько", hu: "többet is választhat", en: "can select multiple" })})
                       </label>
                       <div className="space-y-2 max-h-40 overflow-y-auto border border-brand-200 bg-brand-50/10 p-2 rounded-xl scrollbar-thin">
-                        {procedures.map((p) => {
+                        {bookableProcedures.map((p) => {
                           const isSelected = selectedProcedures.includes(p.id);
                           return (
                             <div

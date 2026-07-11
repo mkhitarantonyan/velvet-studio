@@ -13,7 +13,6 @@ import { useLanguage } from "./lib/LanguageContext";
 
 export default function App() {
   const { language, setLanguage, t } = useLanguage();
-
   const [isAdminPath, setIsAdminPath] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Will be verified by an API call
   const [authChecked, setAuthChecked] = useState(false); // To prevent UI flicker

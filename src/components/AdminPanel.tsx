@@ -244,6 +244,7 @@ Status: ${booking.status.toUpperCase()}
   const [newFirstName, setNewFirstName] = useState("");
   const [newLastName, setNewLastName] = useState("");
   const [newPhone, setNewPhone] = useState("");
+  const [newEmail, setNewEmail] = useState("");
   const [newProcedure, setNewProcedure] = useState("");
   const [newDate, setNewDate] = useState("");
   const [newTime, setNewTime] = useState("12:00");
@@ -377,7 +378,7 @@ Status: ${booking.status.toUpperCase()}
     e.preventDefault();
     setDrawerError(null);
 
-    if (!newFirstName.trim() || !newLastName.trim() || !newPhone.trim() || !newProcedure || !newDate || !newTime) {
+    if (!newFirstName.trim() || !newLastName.trim() || !newPhone.trim() || !newEmail.trim() || !newProcedure || !newDate || !newTime) {
       setDrawerError(t("bookingErrorAllFields"));
       return;
     }
@@ -388,6 +389,7 @@ Status: ${booking.status.toUpperCase()}
         firstName: newFirstName.trim(),
         lastName: newLastName.trim(),
         phone: newPhone.trim(),
+        email: newEmail.trim(),
         procedureId: newProcedure,
         date: newDate,
         time: newTime,
@@ -398,6 +400,7 @@ Status: ${booking.status.toUpperCase()}
       setNewFirstName("");
       setNewLastName("");
       setNewPhone("");
+      setNewEmail("");
       setNewComment("");
       setShowAddDrawer(false);
     } catch (err: any) {
@@ -493,12 +496,12 @@ Status: ${booking.status.toUpperCase()}
 
   const timeSlots = useMemo(() => {
     const slots = [];
-    for (let h = 10; h < 22; h++) {
+    for (let h = 10; h < 20; h++) {
       for (const m of ["00", "15", "30", "45"]) {
         slots.push(`${String(h).padStart(2, "0")}:${m}`);
       }
     }
-    slots.push("22:00");
+    slots.push("20:00");
     return slots;
   }, []);
 
@@ -865,8 +868,8 @@ Status: ${booking.status.toUpperCase()}
                 <div className="grid grid-cols-[64px_1fr] max-h-[600px] overflow-y-auto relative animate-fade-in" style={{ scrollbarWidth: "thin" }}>
                   
                   {/* Hour Labels Column */}
-                  <div className="bg-brand-50/5 relative select-none text-right pr-2 transition-all duration-300 ease-in-out" style={{ height: `${hourHeight * 12}px` }}>
-                    {Array.from({ length: 12 }, (_, i) => 10 + i).map((hr) => (
+                  <div className="bg-brand-50/5 relative select-none text-right pr-2 transition-all duration-300 ease-in-out" style={{ height: `${hourHeight * 10}px` }}>
+                    {Array.from({ length: 10 }, (_, i) => 10 + i).map((hr) => (
                       <div key={hr} className="relative transition-all duration-300 ease-in-out" style={{ height: `${hourHeight}px` }}>
                         <span className="absolute -top-2.5 right-1.5 text-[9px] font-bold text-brand-400 font-mono tracking-wider">
                           {`${String(hr).padStart(2, "0")}:00`}
@@ -875,17 +878,17 @@ Status: ${booking.status.toUpperCase()}
                     ))}
                     <div className="absolute bottom-0 right-1.5">
                       <span className="text-[9px] font-bold text-brand-400 font-mono tracking-wider">
-                        22:00
+                        20:00
                       </span>
                     </div>
                   </div>
 
                   {/* The Interactive Grid */}
-                  <div className="relative border-l border-brand-200 bg-brand-50/10 transition-all duration-300 ease-in-out" style={{ height: `${hourHeight * 12}px` }}>
+                  <div className="relative border-l border-brand-200 bg-brand-50/10 transition-all duration-300 ease-in-out" style={{ height: `${hourHeight * 10}px` }}>
                     
                     {/* Grid Horizontal Reference Lines */}
                     <div className="absolute inset-0 pointer-events-none">
-                      {Array.from({ length: 12 }, (_, i) => 10 + i).map((hr) => (
+                      {Array.from({ length: 10 }, (_, i) => 10 + i).map((hr) => (
                         <div key={hr} style={{ height: `${hourHeight}px` }} className="border-b border-brand-100/50 relative transition-all duration-300 ease-in-out">
                           {/* 15, 30, 45 minute subtle dashed lines */}
                           <div className="absolute inset-x-0 top-1/4 border-t border-dashed border-brand-100/20" />
@@ -995,7 +998,7 @@ Status: ${booking.status.toUpperCase()}
                           <div key={day.toISOString()} className="relative h-full flex flex-col">
                             
                             {/* 15-minute interactive base click zones */}
-                            {Array.from({ length: 12 }, (_, i) => 10 + i).map((hr) => (
+                            {Array.from({ length: 10 }, (_, i) => 10 + i).map((hr) => (
                               <div key={hr} style={{ height: `${hourHeight}px` }} className="relative flex flex-col shrink-0 transition-all duration-300 ease-in-out">
                                 {[0, 15, 30, 45].map((min) => {
                                   const timeString = `${String(hr).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
@@ -1814,6 +1817,18 @@ Status: ${booking.status.toUpperCase()}
                         value={newPhone}
                         onChange={(e) => setNewPhone(e.target.value)}
                         placeholder="+36 (30) 123-4567"
+                        className="mt-1 w-full rounded-lg border border-brand-200 px-3 py-2 text-sm text-brand-950 focus:border-brand-400 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-brand-800">{t("bookingLabelEmail")}</label>
+                      <input
+                        type="email"
+                        required
+                        value={newEmail}
+                        onChange={(e) => setNewEmail(e.target.value)}
+                        placeholder="client@example.com"
                         className="mt-1 w-full rounded-lg border border-brand-200 px-3 py-2 text-sm text-brand-950 focus:border-brand-400 focus:outline-none"
                       />
                     </div>

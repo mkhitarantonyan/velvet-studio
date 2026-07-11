@@ -1,14 +1,14 @@
 [
   {
-    "id": "33333333-3333-3333-3333-333333333333",
-    "nameEn": "Manicure + Gel Polish",
-    "nameRu": "Маникюр + Покрытие гель-лак",
-    "nameHu": "Manikűr + Gél lakk",
-    "price": 8900,
-    "durationMinutes": 90,
-    "descriptionEn": "Combined treatment of nails, plate alignment with a base, solid premium long-lasting gel polish and top.",
-    "descriptionRu": "Комбинированная обработка ногтей, выравнивание ногтевой пластины базой, однотонное покрытие премиальным стойким гель-лаком и топ.",
-    "descriptionHu": "Kombinált körömkezelés, a körömlemez kiegyenlítése alappal, prémium tartós gél lakk fedés és top.",
+    "id": "ddef5deb-51f6-4cc3-9833-f335efe13628",
+    "nameEn": "New Service",
+    "nameRu": "Новая услуга",
+    "nameHu": "Új szolgáltatás",
+    "price": 5000,
+    "durationMinutes": 60,
+    "descriptionEn": "Description...",
+    "descriptionRu": "Описание...",
+    "descriptionHu": "Leírás...",
     "isHidden": false
   },
   {

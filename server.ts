@@ -87,6 +87,16 @@ const bookingLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The JSON fallback has no transactions. Serialize booking mutations in this
+// process so a second request cannot validate a slot between the first request's
+// validation and write. Supabase deployments still benefit from the database RPC.
+let bookingMutationQueue: Promise<void> = Promise.resolve();
+function withBookingMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+  const result = bookingMutationQueue.then(operation, operation);
+  bookingMutationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 const JWT_SECRET = (() => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -429,17 +439,7 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
   `;
 
   if (!user || !pass) {
-    console.log(`ℹ️ [SMTP EMAIL FALLBACK LOG]
-========================================
-To: ${emailTo}
-Subject: ${subject}
-Heading: ${heading}
-Client: ${booking.firstName} ${booking.lastName} (${booking.phone})
-Service: ${procedureName}
-Time: ${booking.date} at ${booking.time}
-Status: ${type.toUpperCase()}
-========================================
-SMTP settings are not configured. To enable real email delivery, set SMTP_USER and SMTP_PASS in .env.`);
+    console.warn("SMTP is not configured; client notification was not sent. Set SMTP_USER and SMTP_PASS in .env to enable delivery.");
     return;
   }
 
@@ -461,9 +461,9 @@ SMTP settings are not configured. To enable real email delivery, set SMTP_USER a
       html: htmlContent,
     });
 
-    console.log(`✅ Confirmation email of type "${type}" sent successfully to ${emailTo}.`);
+    console.log(`Client notification sent (type: ${type}).`);
   } catch (error) {
-    console.error(`❌ Failed to send confirmation email to ${emailTo}:`, error);
+    console.error(`Failed to send client notification (type: ${type}):`, error);
   }
 }
 
@@ -691,15 +691,7 @@ async function sendAdminEmailNotification(booking: any) {
   `;
 
   if (!user || !pass) {
-    console.log(`ℹ️ [ADMIN SMTP EMAIL FALLBACK LOG]
-========================================
-To Admin: ${adminEmail}
-Subject: ${subject}
-Client: ${booking.firstName} ${booking.lastName} (${booking.phone})
-Service: ${procedureName}
-Time: ${booking.date} at ${booking.time}
-========================================
-SMTP settings are not configured. To enable real email delivery, set SMTP_USER and SMTP_PASS in .env.`);
+    console.warn("SMTP is not configured; admin notification was not sent. Set SMTP_USER and SMTP_PASS in .env to enable delivery.");
     return;
   }
 
@@ -721,9 +713,9 @@ SMTP settings are not configured. To enable real email delivery, set SMTP_USER a
       html: htmlContent,
     });
 
-    console.log(`✅ Admin notification email sent successfully to ${adminEmail}.`);
+    console.log("Admin notification email sent.");
   } catch (error) {
-    console.error(`❌ Failed to send admin notification email to ${adminEmail}:`, error);
+    console.error("Failed to send admin notification email:", error);
   }
 }
 
@@ -833,7 +825,9 @@ app.get("/api/bookings/busy", async (req, res) => {
     const procedures = await loadProcedures();
 
     // Filter active bookings on that specific date
-    const dayBookings = bookings.filter((b) => b.date === date && b.status === "confirmed");
+    // Pending requests reserve their slot as well; otherwise several clients can
+    // submit overlapping requests before an administrator confirms one of them.
+    const dayBookings = bookings.filter((b) => b.date === date && b.status !== "cancelled");
 
     const busySlots = dayBookings.map((b) => {
       let duration = 45;
@@ -883,12 +877,13 @@ app.get("/api/bookings", authenticateAdmin, async (req, res) => {
 
 // Create Booking (Public - anyone can book, but validated against double-booking / concurrency overlaps)
 app.post("/api/bookings", bookingLimiter, async (req, res) => {
+  return withBookingMutationLock(async () => {
   const requestReceivedAt = DateTime.now().setZone("Europe/Budapest").toString();
   try {
     const { firstName, lastName, phone, email, procedureId, procedureIds, date, time, comment } = req.body;
 
     if (!firstName || !lastName || !phone || !email || !procedureId || !date || !time) {
-      console.warn(`[BOOKING REJECTED] Missing fields. Time: ${requestReceivedAt}. Body:`, req.body);
+      console.warn(`[BOOKING REJECTED] Missing required fields. Time: ${requestReceivedAt}.`);
       return res.status(400).json({ error: "Required fields are missing." });
     }
 
@@ -912,15 +907,22 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
       return res.status(400).json({ error: "Invalid phone number format. Please provide a valid international phone number (e.g., +36301234567 or 06301234567)." });
     }
 
-    const actualProcedureIds = (Array.isArray(procedureIds) && procedureIds.length > 0)
+    const actualProcedureIds = Array.from(new Set((Array.isArray(procedureIds) && procedureIds.length > 0)
       ? procedureIds
-      : [procedureId];
+      : [procedureId]));
+
+    if (!actualProcedureIds.every((id) => typeof id === "string" && id.length > 0)) {
+      return res.status(400).json({ error: "Selected procedures are invalid." });
+    }
 
     const procedures = await loadProcedures();
     const requestedProcs = procedures.filter((p) => actualProcedureIds.includes(p.id));
-    if (requestedProcs.length === 0) {
-      console.warn(`[BOOKING REJECTED] Procedures not found: ${actualProcedureIds}. Client: ${cleanFirstName} ${cleanLastName}`);
+    if (requestedProcs.length !== actualProcedureIds.length) {
+      console.warn("[BOOKING REJECTED] One or more requested procedures do not exist.");
       return res.status(400).json({ error: "Selected procedures do not exist." });
+    }
+    if (requestedProcs.some((procedure) => procedure.isHidden)) {
+      return res.status(400).json({ error: "One or more selected services are unavailable." });
     }
 
     const totalDurationMinutes = requestedProcs.reduce((sum, p) => sum + p.durationMinutes, 0);
@@ -947,12 +949,7 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
 
         if (!rpcError && rpcData) {
           if (rpcData.success === false) {
-            // Precise server logging of the double booking block with rich metadata for immediate support trace
-            console.error(`[DOUBLE BOOKING PREVENTED] Atomic DB block triggered.
-    - Client: ${cleanFirstName} ${cleanLastName} (${cleanPhone})
-    - Intended Slot: ${date} ${time}
-    - DB Message: ${rpcData.error || "Time slot occupied"}
-    - Blocked At: ${requestReceivedAt}`);
+            console.warn(`[DOUBLE BOOKING PREVENTED] Database conflict. Time: ${requestReceivedAt}.`);
 
             return res.status(409).json({ error: rpcData.error || "Time slot is already occupied." });
           }
@@ -972,8 +969,9 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
             createdAt: rpcData.created_at
           };
 
-          console.log(`[BOOKING SUCCESS - DB RPC] Booking created. ID: ${newBooking.id}. Client: ${cleanFirstName} ${cleanLastName}. Slot: ${date} ${time}`);
+          console.log(`[BOOKING SUCCESS - DB RPC] Booking created. ID: ${newBooking.id}.`);
           sendAdminEmailNotification(newBooking).catch(console.error);
+          sendEmailNotification(newBooking, "created").catch(console.error);
           return res.status(201).json(newBooking);
         } else if (rpcError) {
           throw rpcError;
@@ -988,17 +986,38 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
     // We already have `procedures`, `requestedProcs`, and `totalDurationMinutes` computed above.
 
     // Convert local Budapest input to absolute Unix time
+    if (typeof date !== "string" || typeof time !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+      return res.status(400).json({ error: "Date must use YYYY-MM-DD and time must use HH:MM." });
+    }
+
     const requestedStartDT = DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd HH:mm", { zone: "Europe/Budapest" });
     if (!requestedStartDT.isValid) {
-      console.warn(`[BOOKING REJECTED] Invalid date/time format: ${date} ${time}. Client: ${cleanFirstName} ${cleanLastName}`);
+      console.warn("[BOOKING REJECTED] Invalid date or time format.");
       return res.status(400).json({ error: "Invalid date or time format provided." });
     }
+
+    const now = DateTime.now().setZone("Europe/Budapest");
+    const startMinutes = parseTimeToMinutes(time);
+    const salonOpensAt = 10 * 60;
+    const salonClosesAt = 20 * 60;
+
+    if (requestedStartDT.startOf("day") < now.startOf("day")) {
+      return res.status(400).json({ error: "Bookings cannot be made for past dates." });
+    }
+    if (startMinutes < salonOpensAt || startMinutes % 15 !== 0 || startMinutes + totalDurationMinutes > salonClosesAt) {
+      return res.status(400).json({ error: "Selected time is outside salon working hours." });
+    }
+    if (requestedStartDT <= now.plus({ minutes: 15 })) {
+      return res.status(400).json({ error: "Please select a time at least 15 minutes from now." });
+    }
+
     const requestedStartMillis = requestedStartDT.toMillis();
     const requestedEndMillis = requestedStartMillis + (totalDurationMinutes * 60000);
 
     // Load active bookings on the same date for validation
     const bookings = await loadBookings();
-    const bookingsOnSameDate = bookings.filter((b) => b.date === date && b.status === "confirmed");
+    const bookingsOnSameDate = bookings.filter((b) => b.date === date && b.status !== "cancelled");
 
     for (const b of bookingsOnSameDate) {
       let existingDuration = 45;
@@ -1026,11 +1045,7 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
         const timeFromStr = b.time;
         const formattedEndTime = existingStartDT.plus({ minutes: existingDuration }).toFormat("HH:mm");
         
-        console.error(`[DOUBLE BOOKING PREVENTED] Server-side overlap check blocked booking.
-  - Client: ${cleanFirstName} ${cleanLastName} (${cleanPhone})
-  - Intended Slot: ${date} ${time} (${requestedProcs.map(p => p.nameEn).join(", ")})
-  - Overlapping Booking: ID ${b.id} from ${timeFromStr} to ${formattedEndTime}
-  - Blocked At: ${requestReceivedAt}`);
+        console.warn(`[DOUBLE BOOKING PREVENTED] Server-side overlap check. Existing booking ID: ${b.id}.`);
 
         return res.status(409).json({ 
           error: `The requested time slot overlaps with an existing appointment from ${timeFromStr} to ${formattedEndTime}. Please choose another time slot.`
@@ -1050,20 +1065,23 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
       comment: cleanComment,
     });
 
-    console.log(`[BOOKING SUCCESS - FALLBACK] Booking created. ID: ${newBooking.id}. Client: ${cleanFirstName} ${cleanLastName}. Slot: ${date} ${time}`);
+    console.log(`[BOOKING SUCCESS - FALLBACK] Booking created. ID: ${newBooking.id}.`);
 
     // Fire Email Notification asynchronously
     sendAdminEmailNotification(newBooking).catch(console.error);
+    sendEmailNotification(newBooking, "created").catch(console.error);
 
     res.status(201).json(newBooking);
   } catch (error: any) {
     console.error(`[BOOKING CRITICAL EXCEPTION] Failed to handle booking request. Time: ${requestReceivedAt}. Error:`, error);
     res.status(500).json({ error: error.message || "Failed to create booking" });
   }
+  });
 });
 
 // Update Booking Status (Protected - admin only)
 app.put("/api/bookings/:id/status", authenticateAdmin, async (req, res) => {
+  return withBookingMutationLock(async () => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -1078,13 +1096,16 @@ app.put("/api/bookings/:id/status", authenticateAdmin, async (req, res) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    // No client email notification on status change (admin handles contact manually)
+    if (status === "confirmed" || status === "cancelled") {
+      sendEmailNotification(updated, status).catch(console.error);
+    }
 
     res.json(updated);
   } catch (error) {
     console.error("Failed to update booking status API:", error);
     res.status(500).json({ error: "Failed to update booking status" });
   }
+  });
 });
 
 // Delete Booking (Protected - admin only)
@@ -1132,6 +1153,7 @@ const proceduresArraySchema = z.array(procedureSchema);
 
 // Update procedures (Protected - admin only)
 app.put("/api/procedures", authenticateAdmin, async (req, res) => {
+  return withBookingMutationLock(async () => {
   try {
     // 1. Нормализуем входящие данные: гарантируем isHidden
     const rawProcedures = req.body.procedures;
@@ -1152,6 +1174,25 @@ app.put("/api/procedures", authenticateAdmin, async (req, res) => {
 
     const validatedProcedures = parseResult.data;
 
+    // PUT replaces the complete catalogue. Do not allow it to silently remove a
+    // service that is present in booking history (the local JSON fallback has no
+    // foreign-key constraint to protect this for us).
+    const incomingIds = new Set(validatedProcedures.map((procedure) => String(procedure.id)));
+    const referencedProcedureIds = new Set<string>();
+    for (const booking of await loadBookings()) {
+      if (booking.procedureId) referencedProcedureIds.add(String(booking.procedureId));
+      for (const procedureId of booking.procedureIds || []) {
+        referencedProcedureIds.add(String(procedureId));
+      }
+    }
+    const removedReferencedIds = [...referencedProcedureIds].filter((id) => !incomingIds.has(id));
+    if (removedReferencedIds.length > 0) {
+      return res.status(409).json({
+        error: "Cannot remove services that are linked to existing bookings.",
+        blocked: removedReferencedIds,
+      });
+    }
+
     // 3. Сохраняем
     console.log("📝 Сохраняем процедуры:", JSON.stringify(validatedProcedures, null, 2));
     await saveProcedures(validatedProcedures);
@@ -1165,10 +1206,12 @@ app.put("/api/procedures", authenticateAdmin, async (req, res) => {
     const status = message.includes("linked to existing bookings") ? 409 : 500;
     res.status(status).json({ error: message });
   }
+  });
 });
 
 // Delete Procedures (Protected - admin only)
 app.delete("/api/procedures", authenticateAdmin, async (req, res) => {
+  return withBookingMutationLock(async () => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -1218,6 +1261,7 @@ app.delete("/api/procedures", authenticateAdmin, async (req, res) => {
     console.error("Failed to delete procedures API:", error);
     res.status(500).json({ error: "Failed to delete procedures" });
   }
+  });
 });
 
 // Get contacts (Public - needed for footer & address details)

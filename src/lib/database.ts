@@ -6,6 +6,21 @@ import path from "path";
 let supabaseClient: SupabaseClient | null = null;
 
 /**
+ * Persist JSON fallback data without leaving a partially-written file behind if
+ * the process stops while writing. The rename is atomic on the same volume.
+ */
+function writeJsonAtomically(filePath: string, value: unknown): void {
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(value, null, 2), "utf-8");
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    throw error;
+  }
+}
+
+/**
  * Checks if Supabase credentials are validly provided in the environment.
  */
 export function isSupabaseConfigured(): boolean {
@@ -61,8 +76,8 @@ export async function loadBookings(): Promise<Booking[]> {
     try {
       if (fs.existsSync(filePath)) {
         const content = fs.readFileSync(filePath, "utf-8");
-        const list = JSON.parse(content);
-        return list.map((b: any) => {
+        const list: any[] = JSON.parse(content);
+        return list.map((b) => {
           let procedureIds = b.procedureIds;
           let comment = b.comment || "";
           let cleanComment = comment;
@@ -87,7 +102,7 @@ export async function loadBookings(): Promise<Booking[]> {
             comment: cleanComment,
             procedureIds,
             email: email || b.email,
-          };
+          } as Booking;
         });
       }
     } catch (err) {
@@ -107,7 +122,7 @@ export async function loadBookings(): Promise<Booking[]> {
     throw error;
   }
 
-  return (data || []).map((b: any) => {
+  return (data || []).map((b): Booking => {
     const commentStr = b.comment || "";
     let procedureIds = (Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0)
       ? b.procedure_ids
@@ -175,9 +190,10 @@ export async function createBooking(booking: Omit<Booking, "id" | "createdAt" | 
     currentBookings.push(newBooking);
 
     try {
-      fs.writeFileSync(filePath, JSON.stringify(currentBookings, null, 2), "utf-8");
+      writeJsonAtomically(filePath, currentBookings);
     } catch (err) {
       console.error("Failed to write to bookings.json:", err);
+      throw err;
     }
 
     return newBooking;
@@ -250,9 +266,10 @@ export async function updateBookingStatus(id: string, status: "pending" | "confi
     currentBookings[index].status = status;
 
     try {
-      fs.writeFileSync(filePath, JSON.stringify(currentBookings, null, 2), "utf-8");
+      writeJsonAtomically(filePath, currentBookings);
     } catch (err) {
       console.error("Failed to write to bookings.json:", err);
+      throw err;
     }
 
     return currentBookings[index];
@@ -272,15 +289,27 @@ export async function updateBookingStatus(id: string, status: "pending" | "confi
 
   if (!data || data.length === 0) return null;
   const b = data[0];
+  let comment = b.comment || "";
+  let email: string | undefined;
+  const emailMatch = comment.match(/\[email:\s*([^\]\s]+)\]/i);
+  if (emailMatch) {
+    email = emailMatch[1];
+    comment = comment.replace(/\[email:\s*([^\]\s]+)\]/i, "").trim();
+  }
+  const procedureIds = Array.isArray(b.procedure_ids) && b.procedure_ids.length > 0
+    ? b.procedure_ids
+    : (b.procedure_id ? [b.procedure_id] : []);
   return {
     id: String(b.id),
     firstName: b.first_name,
     lastName: b.last_name,
     phone: b.phone,
+    email,
     procedureId: b.procedure_id,
+    procedureIds,
     date: b.booking_date,
     time: b.booking_time ? b.booking_time.substring(0, 5) : "",
-    comment: b.comment || "",
+    comment,
     status: b.status as 'pending' | 'confirmed' | 'cancelled',
     createdAt: b.created_at,
   };
@@ -304,9 +333,10 @@ export async function deleteBooking(id: string): Promise<boolean> {
     if (filtered.length === currentBookings.length) return false;
 
     try {
-      fs.writeFileSync(filePath, JSON.stringify(filtered, null, 2), "utf-8");
+      writeJsonAtomically(filePath, filtered);
     } catch (err) {
       console.error("Failed to write to bookings.json:", err);
+      throw err;
     }
 
     return true;
@@ -422,7 +452,7 @@ export async function loadProcedures(): Promise<Procedure[]> {
     }
     try {
       const normalizedDefaults = DEFAULT_PROCEDURES.map(normalizeProcedure);
-      fs.writeFileSync(filePath, JSON.stringify(normalizedDefaults, null, 2), "utf-8");
+      writeJsonAtomically(filePath, normalizedDefaults);
       return normalizedDefaults;
     } catch (err) {
       console.error("Failed to write default procedures.json:", err);
@@ -442,7 +472,7 @@ export async function loadProcedures(): Promise<Procedure[]> {
     return DEFAULT_PROCEDURES.map(normalizeProcedure);
   }
 
-  return data.map((p: any) => normalizeProcedure({
+  return data.map((p): Procedure => normalizeProcedure({
     id: String(p.id),
     nameEn: p.name_en,
     nameRu: p.name_ru,
@@ -463,7 +493,7 @@ export async function saveProcedures(procedures: Procedure[]): Promise<void> {
     console.warn("⚠️ Supabase is not configured. Saving procedures to local file 'procedures.json'.");
     const filePath = path.join(process.cwd(), "procedures.json");
     try {
-      fs.writeFileSync(filePath, JSON.stringify(normalizedProcedures, null, 2), "utf-8");
+      writeJsonAtomically(filePath, normalizedProcedures);
     } catch (err) {
       console.error("Failed to write to procedures.json:", err);
       throw err;
@@ -547,7 +577,7 @@ export async function deleteProcedures(ids: string[]): Promise<{ deleted: string
     const remaining = current.filter((p) => !idsSet.has(String(p.id)));
     const deleted = current.filter((p) => idsSet.has(String(p.id))).map((p) => String(p.id));
     try {
-      fs.writeFileSync(filePath, JSON.stringify(remaining, null, 2), "utf-8");
+      writeJsonAtomically(filePath, remaining);
     } catch (err) {
       console.error("Failed to write procedures.json during delete:", err);
       throw err;
@@ -593,9 +623,9 @@ export async function loadContacts(): Promise<SalonContacts> {
     addressEn: "Budapest, Andrássy út 12, 1061 Hungary",
     addressRu: "Будапешт, проспект Андраши 12, 1061 Венгрия",
     addressHu: "Budapest, Andrássy út 12, 1061 Magyarország",
-    workingHoursEn: "Daily from 10:00 to 22:00",
-    workingHoursRu: "Ежедневно с 10:00 до 22:00",
-    workingHoursHu: "Naponta 10:00 és 22:00 között"
+    workingHoursEn: "Daily from 10:00 to 20:00",
+    workingHoursRu: "Ежедневно с 10:00 до 20:00",
+    workingHoursHu: "Naponta 10:00 és 20:00 között"
   };
 
   if (!isSupabaseConfigured()) {
@@ -610,7 +640,7 @@ export async function loadContacts(): Promise<SalonContacts> {
       console.error("Failed to read contacts.json fallback:", err);
     }
     try {
-      fs.writeFileSync(filePath, JSON.stringify(initialContacts, null, 2), "utf-8");
+      writeJsonAtomically(filePath, initialContacts);
     } catch (err) {
       console.error("Failed to write default contacts.json:", err);
     }
@@ -653,7 +683,7 @@ export async function saveContacts(contacts: SalonContacts): Promise<void> {
     console.warn("⚠️ Supabase is not configured. Saving contacts to local file 'contacts.json'.");
     const filePath = path.join(process.cwd(), "contacts.json");
     try {
-      fs.writeFileSync(filePath, JSON.stringify(contacts, null, 2), "utf-8");
+      writeJsonAtomically(filePath, contacts);
     } catch (err) {
       console.error("Failed to write to contacts.json:", err);
       throw err;
