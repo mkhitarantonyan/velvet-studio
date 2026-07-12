@@ -38,14 +38,11 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
   const [busySlots, setBusySlots] = useState<{ time: string; durationMinutes: number }[]>([]);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
-  // Sync preselected procedure when modal opens
+// Sync preselected procedure when modal opens
   useEffect(() => {
     if (preselectedProcedure) {
       setProcedure(preselectedProcedure);
       setSelectedProcedures([preselectedProcedure]);
-    } else if (bookableProcedures.length > 0) {
-      setProcedure(bookableProcedures[0].id); // Default to first visible service
-      setSelectedProcedures([bookableProcedures[0].id]);
     } else {
       setProcedure("");
       setSelectedProcedures([]);
@@ -515,16 +512,15 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
                           return (
                             <div
                               key={p.id}
-                              onClick={() => {
-                                setSelectedProcedures((prev) => {
-                                  if (isSelected) {
-                                    if (prev.length <= 1) return prev; // keep at least 1
-                                    return prev.filter((id) => id !== p.id);
-                                  } else {
-                                    return [...prev, p.id];
-                                  }
-                                });
-                              }}
+                           onClick={() => {
+                              setSelectedProcedures((prev) => {
+                                if (isSelected) {
+                                  return prev.filter((id) => id !== p.id);
+                                } else {
+                                  return [...prev, p.id];
+                                }
+                              });
+                            }}
                               className={`flex items-center justify-between p-2.5 rounded-xl border text-sm sm:text-xs cursor-pointer transition-all ${
                                 isSelected
                                   ? "bg-brand-50/80 border-brand-400 text-brand-950 font-medium shadow-sm"

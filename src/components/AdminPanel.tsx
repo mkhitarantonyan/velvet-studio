@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Booking, Procedure, SalonContacts } from "../types";
+import { Booking, Procedure, SalonContacts, PortfolioItem } from "../types";
 import { 
   CheckCircle, 
   XCircle, 
@@ -10,6 +10,7 @@ import {
   Plus, 
   AlertCircle,
   FileText,
+  FolderKanban,
   Save,
   Check,
   Edit3,
@@ -28,7 +29,8 @@ import {
   Copy,
   ZoomIn,
   ZoomOut,
-  Lock
+  Lock,
+  Image as ImageIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useLanguage } from "../lib/LanguageContext";
@@ -37,12 +39,14 @@ interface AdminPanelProps {
   bookings: Booking[];
   procedures: Procedure[];
   contacts: SalonContacts | null;
+  portfolio: PortfolioItem[];
   onUpdateStatus: (id: string, status: 'confirmed' | 'cancelled') => Promise<void>;
   onDeleteBooking: (id: string) => Promise<void>;
   onAddBooking: (bookingData: Omit<Booking, 'id' | 'status' | 'createdAt'>) => Promise<void>;
   onUpdateProcedures: (procedures: Procedure[]) => Promise<Procedure[]>;
   onDeleteProcedures: (ids: string[]) => Promise<any>;
   onUpdateContacts: (contacts: SalonContacts) => Promise<void>;
+  onUpdatePortfolio: (items: PortfolioItem[]) => Promise<void>;
   onLogout: () => void;
 }
 
@@ -50,12 +54,14 @@ export default function AdminPanel({
   bookings, 
   procedures, 
   contacts, 
+  portfolio,
   onUpdateStatus, 
   onDeleteBooking, 
   onAddBooking,
   onUpdateProcedures,
   onDeleteProcedures,
   onUpdateContacts,
+  onUpdatePortfolio,
   onLogout
 }: AdminPanelProps) {
   const { language, t } = useLanguage();
@@ -322,6 +328,19 @@ Status: ${booking.status.toUpperCase()}
 
   // Editable contacts form
   const [localContacts, setLocalContacts] = useState<SalonContacts | null>(null);
+  // Portfolio state
+  const [localPortfolio, setLocalPortfolio] = useState<PortfolioItem[]>([]);
+  const [portfolioSaveSuccess, setPortfolioSaveSuccess] = useState(false);
+
+  const handleSavePortfolio = async () => {
+    try {
+      await onUpdatePortfolio(localPortfolio);
+      setPortfolioSaveSuccess(true);
+      setTimeout(() => setPortfolioSaveSuccess(false), 3000);
+    } catch (err) {
+      alert("Failed to save portfolio");
+    }
+  };
   const [contactsSaveSuccess, setContactsSaveSuccess] = useState(false);
 
   // Initialize editing buffers
@@ -340,6 +359,10 @@ Status: ${booking.status.toUpperCase()}
       setLocalContacts(JSON.parse(JSON.stringify(contacts)));
     }
   }, [contacts]);
+
+  useEffect(() => {
+    setLocalPortfolio(JSON.parse(JSON.stringify(portfolio || [])));
+  }, [portfolio]);
 
   // Set default date for drawer to tomorrow
   useEffect(() => {
@@ -562,6 +585,17 @@ Status: ${booking.status.toUpperCase()}
             }`}
           >
             {t("adminTabEditProcedures")}
+          </button>
+          <button
+            onClick={() => setActiveTab("portfolio")}
+            className={`px-4 sm:px-5 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer shrink-0 ${
+              activeTab === "portfolio"
+                ? "border-brand-500 text-brand-900"
+                : "border-transparent text-brand-600 hover:text-brand-900"
+            } flex items-center gap-2`}
+          >
+            <FolderKanban className="h-4 w-4" />
+            <span>{language === "ru" ? "Портфолио" : language === "hu" ? "Portfólió" : "Portfolio"}</span>
           </button>
           <button
             onClick={() => setActiveTab("contacts")}
@@ -1537,7 +1571,156 @@ Status: ${booking.status.toUpperCase()}
             </div>
           </motion.div>
         )}
+        
+        {/* TAB PORTFOLIO */}
+        {activeTab === "portfolio" && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6 space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-xs text-brand-600 font-semibold uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-brand-500" />
+                  {language === "ru" ? "Галерея работ" : language === "hu" ? "Portfólió menedzser" : "Portfolio Manager"}
+                </p>
+                <h3 className="text-sm font-semibold text-brand-950 mt-1">
+                  {language === "ru" ? "Добавляйте и редактируйте фотографии для галереи на главной странице." : language === "hu" ? "Adjon hozzá és szerkesszen képeket a főoldali galériához." : "Add and edit the photos for the gallery on the main page."}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    const newId = self.crypto.randomUUID ? self.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                      const r = Math.random() * 16 | 0;
+                      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+                    });
+                    const newWork = { id: newId, titleEn: "New Work", titleRu: "New Work", titleHu: "New Work", descriptionEn: "", descriptionRu: "", descriptionHu: "", image: "", categoryEn: "", categoryRu: "", categoryHu: "" };
+                    setLocalPortfolio(prev => [newWork, ...prev]);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>{language === "ru" ? "Добавить работу" : language === "hu" ? "Új munka" : "Add New Work"}</span>
+                </button>
+              </div>
+            </div>
 
+            {portfolioSaveSuccess && (
+              <div className="rounded-lg bg-emerald-50 p-3 text-xs font-semibold text-emerald-600 border border-emerald-100">
+                ✓ {language === "ru" ? "Портфолио успешно сохранено!" : language === "hu" ? "A portfólió sikeresen elmentve!" : "Portfolio saved successfully!"}
+              </div>
+            )}
+
+            {/* Portfolio Grid */}
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {localPortfolio.map((item, idx) => (
+                <div key={item.id} className="border border-brand-200/70 rounded-2xl bg-white shadow-sm overflow-hidden relative group">
+                  {/* Image Preview */}
+                  <div className="h-48 bg-brand-50/50 flex items-center justify-center">
+                    {item.image ? (
+                      <img src={item.image} alt={item.titleEn || 'Portfolio item'} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="text-center text-brand-400">
+                        <ImageIcon className="h-10 w-10 mx-auto" />
+                        <p className="text-xs mt-1 font-semibold">{language === "ru" ? "Нет изображения" : "No Image"}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => {
+                      showConfirm(
+                        language === "ru" ? "Удалить работу" : "Delete Item",
+                        language === "ru" ? `Вы уверены, что хотите удалить "${item.titleEn || 'эту работу'}"?` : `Are you sure you want to delete "${item.titleEn || 'this item'}"?`,
+                        () => setLocalPortfolio(localPortfolio.filter(p => p.id !== item.id))
+                      );
+                    }}
+                    className="absolute top-3 right-3 h-8 w-8 rounded-full bg-black/40 text-white/80 hover:bg-rose-600 hover:text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-sm"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+
+                  {/* Form Fields */}
+                  <div className="p-4 space-y-3">
+                    {/* Image URL */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-brand-700 uppercase tracking-wider mb-1">{language === "ru" ? "URL изображения" : "Image URL"}</label>
+                      <input
+                        type="text"
+                        placeholder="https://example.com/image.jpg"
+                        value={item.image}
+                        onChange={(e) => {
+                          const copy = [...localPortfolio];
+                          copy[idx].image = e.target.value;
+                          setLocalPortfolio(copy);
+                        }}
+                        className="w-full text-xs p-2 border border-brand-200 rounded-lg bg-brand-50/30 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
+                      />
+                    </div>
+
+                    {/* Title */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-brand-700 uppercase tracking-wider mb-1">{language === "ru" ? "Название" : "Title"}</label>
+                      <input
+                        type="text"
+                        placeholder={language === "ru" ? "Название работы" : "Title of the work"}
+                        value={item.titleEn}
+                        onChange={(e) => {
+                          const copy = [...localPortfolio];
+                          const value = e.target.value;
+                          copy[idx].titleEn = value;
+                          copy[idx].titleRu = value;
+                          copy[idx].titleHu = value;
+                          setLocalPortfolio(copy);
+                        }}
+                        className="w-full text-sm font-semibold p-2 border border-brand-200 rounded-lg bg-brand-50/30 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
+                      />
+                    </div>
+
+                    {/* Category */}
+                {/* Category */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-brand-700 uppercase tracking-wider mb-1">
+                        {language === "ru" ? "Категория" : "Category"}
+                      </label>
+                      <input
+                        type="text"
+                        list={`category-options-${item.id}`}
+                        value={item.categoryEn}
+                        onChange={(e) => {
+                          const copy = [...localPortfolio];
+                          const value = e.target.value.trim();
+                          copy[idx].categoryEn = value;
+                          copy[idx].categoryRu = value;
+                          copy[idx].categoryHu = value;
+                          setLocalPortfolio(copy);
+                        }}
+                        placeholder={language === "ru" ? "Введите категорию" : "Enter category"}
+                        className="w-full text-sm p-2 border border-brand-200 rounded-lg bg-white focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
+                      />
+                      <datalist id={`category-options-${item.id}`}>
+                        {Array.from(new Set(localPortfolio.map(p => p.categoryEn))).filter(Boolean).map(cat => (
+                          <option key={cat} value={cat} />
+                          ))}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+                ))}
+            </div>
+
+            {/* Save Button */}
+            <div className="flex justify-end mt-4 border-t border-brand-200/50 pt-6">
+              <button
+                onClick={handleSavePortfolio}
+                className="flex items-center gap-2 rounded-full bg-brand-500 px-6 py-3 text-sm font-bold text-white hover:bg-brand-600 shadow-md transition-colors"
+              >
+                <Save className="h-4 w-4" />
+                <span>{language === "ru" ? "Сохранить все изменения в портфолио" : "Save All Portfolio Changes"}</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
         {/* TAB 3: EDIT CONTACTS */}
         {activeTab === "contacts" && localContacts && (
           <motion.div

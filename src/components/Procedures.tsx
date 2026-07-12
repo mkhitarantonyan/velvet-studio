@@ -42,10 +42,10 @@ export default function Procedures({ procedures, onSelectProcedure }: Procedures
               viewport={{ once: true }}
               transition={{ duration: 0.5, delay: idx * 0.05 }}
               key={procedure.id}
-              className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-brand-200/50 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-brand-300 hover:shadow-xl hover:shadow-brand-950/5"
-            >
-              {/* Signature accent stripe — thickens on hover, like a nail polish swatch */}
-              <span className="absolute inset-x-0 top-0 h-1 bg-brand-300 transition-all duration-300 group-hover:h-1.5 group-hover:bg-brand-500" />
+className="group relative flex flex-col justify-between rounded-2xl border border-brand-200/50 bg-white p-6 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-brand-300 hover:shadow-xl hover:shadow-brand-950/5"
+          >
+            {/* Signature accent stripe — thickens on hover, like a nail polish swatch */}
+            <span className="absolute inset-x-0 top-0 h-1 rounded-t-2xl bg-brand-300 transition-all duration-300 group-hover:h-1.5 group-hover:bg-brand-500" />
 
               <div>
                 {/* Name */}
@@ -53,16 +53,41 @@ export default function Procedures({ procedures, onSelectProcedure }: Procedures
                   {t(procedure, "name")}
                 </h3>
 
-                {/* Meta row: price is the number people scan for first, so it gets the strongest chip */}
+                {/* Meta row: price and time with interactive hover tooltips */}
                 <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-950 px-3 py-1 text-xs font-bold text-white">
-                    <Tag className="h-3.5 w-3.5 text-brand-200" />
-                    {formatPrice(procedure.price)}
-                  </span>
+                  
+                  {/* Price Tag with Tooltip */}
+                  <div className="group/tooltip relative flex items-center">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-950 pl-3 pr-2.5 py-1 text-xs font-bold text-white cursor-help shadow-sm">
+                      <Tag className="h-3.5 w-3.5 text-brand-200" />
+                      {formatPrice(procedure.price)}
+                      <Info className="h-3 w-3 text-brand-400/80 ml-0.5" />
+                    </span>
+                    {/* Tooltip Content */}
+                    <div className="absolute bottom-full left-1/2 mb-2 hidden w-56 -translate-x-1/2 rounded-xl bg-brand-950 p-3 text-[10px] font-normal leading-relaxed text-brand-100 shadow-xl group-hover/tooltip:block z-30 opacity-0 group-hover/tooltip:opacity-100 transition-opacity">
+                      {t("servicesPriceDisclaimer")}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-brand-950" />
+                    </div>
+                  </div>
+
+                  {/* Time Tag */}
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50/80 px-3 py-1 text-xs font-medium text-brand-600">
                     <Clock className="h-3.5 w-3.5 text-brand-400" />
                     {procedure.durationMinutes} {t("bookingMinutes")}
                   </span>
+
+                  {/* Complex Case Alert Tooltip */}
+                  <div className="group/tooltip relative flex items-center">
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-600 cursor-help transition-colors hover:bg-amber-100">
+                      <AlertTriangle className="h-3 w-3" />
+                    </span>
+                    {/* Tooltip Content */}
+                    <div className="absolute bottom-full left-1/2 mb-2 hidden w-48 -translate-x-1/2 rounded-xl bg-amber-950 p-3 text-[10px] font-normal leading-relaxed text-amber-50 shadow-xl group-hover/tooltip:block z-30 text-center opacity-0 group-hover/tooltip:opacity-100 transition-opacity">
+                      {complexNotice}
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-amber-950" />
+                    </div>
+                  </div>
+
                 </div>
 
                 {/* Description */}
@@ -89,32 +114,7 @@ export default function Procedures({ procedures, onSelectProcedure }: Procedures
           ))}
         </div>
 
-        {/* Notices */}
-        <div className="mt-12 grid gap-3 sm:grid-cols-2 max-w-3xl mx-auto">
-          <div className="flex items-start gap-3 rounded-xl border border-brand-200/40 bg-white p-4">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100">
-              <Info className="h-4 w-4 text-brand-600" />
-            </div>
-            <p className="text-xs text-brand-700 leading-relaxed">
-              {complexNotice}
-            </p>
-          </div>
-
-          <div className="flex items-start gap-3 rounded-xl border border-amber-200/50 bg-amber-50/40 p-4">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100">
-              <AlertTriangle className="h-4 w-4 text-amber-700" />
-            </div>
-            <p className="text-xs text-amber-900 leading-relaxed">
-              {t({
-                en: "All shown prices are preliminary estimates (calculated at ~400 HUF = 1 EUR). The final price may be adjusted during your appointment depending on custom additions, specialized design, or additional materials required for your specific service.",
-                ru: "Все указанные цены являются предварительными и ориентировочными (расчет по курсу ~400 Ft = 1 €). Окончательная стоимость может быть скорректирована во время сеанса в зависимости от сложности, дизайна или дополнительных материалов.",
-                hu: "Minden feltüntetett ár előzetes kalkuláció (~400 Ft = 1 € árfolyamon számolva). A végleges ár a kezelés során módosulhat a plusz szolgáltatások, egyedi dizájn vagy felhasznált anyagok függvényében."
-              })}
-            </p>
-          </div>
         </div>
-
-      </div>
     </section>
   );
 }

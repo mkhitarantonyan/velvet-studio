@@ -23,11 +23,15 @@ import {
   saveProcedures,
   loadContacts,
   saveContacts,
+  loadPortfolio,
+  savePortfolio,
 } from "./src/lib/database";
 import helmet from "helmet";
 import { z } from "zod";
 
-const app = express();
+const app = express(); // <--- ДОБАВЬТЕ ТОЛЬКО ЭТУ СТРОКУ
+const PORT = process.env.PORT || 3000;
+
 app.set("trust proxy", 1);
 app.use(helmet({
   contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
@@ -42,7 +46,9 @@ app.use(helmet({
   } : false,
   crossOriginEmbedderPolicy: false // Allows loading images from other origins like google maps
 }));
-const PORT = 3000;
+
+import { createServer } from "http";
+import { Server } from "socket.io";
 
 // CORS: allow only the app's own origin(s) and local dev
 const ALLOWED_ORIGINS: string[] = [
@@ -50,6 +56,16 @@ const ALLOWED_ORIGINS: string[] = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ].filter(Boolean) as string[];
+
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: ALLOWED_ORIGINS,
+    credentials: true
+  }
+});
+
+
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -222,7 +238,7 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
   const port = parseInt(process.env.SMTP_PORT || "587", 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || `"Velvet Budapest" <noreply@velvetnails.com>`;
+  const from = process.env.SMTP_FROM || `"Smart Nail Studio" <noreply@velvetnails.com>`;
 
   const emailTo = booking.email;
   if (!emailTo) {
@@ -258,17 +274,17 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
   let statusLabel = "Awaiting Confirmation / Ожидает подтверждения / Visszaigazolásra vár";
 
   if (type === "created") {
-    subject = "Velvet Budapest - Booking Received / Запись получена / Foglalás regisztrálva";
+    subject = "Smart Nail Studio - Booking Received / Запись получена / Foglalás regisztrálva";
     heading = "Thank you for booking! / Спасибо за запись! / Köszönjük a foglalást!";
     intro = "We have received your booking request. Our administrator will confirm your appointment shortly. / Мы получили вашу заявку на запись. Наш администратор подтвердит её в ближайшее время. / Megkaptuk foglalási igényét. Adminisztrátorunk hamarosan visszaigazolja.";
   } else if (type === "confirmed") {
-    subject = "Velvet Budapest - Booking CONFIRMED / Запись ПОДТВЕРЖДЕНА / Foglalás VISSZAIGAZOLVA";
+    subject = "Smart Nail Studio - Booking CONFIRMED / Запись ПОДТВЕРЖДЕНА / Foglalás VISSZAIGAZOLVA";
     heading = "Your Booking is Confirmed! / Ваша запись подтверждена! / Foglalása visszaigazolva!";
-    intro = "We are looking forward to seeing you at Velvet Budapest! / Мы с нетерпением ждем вас в Velvet Budapest! / Szeretettel várjuk Önt a Velvet Budapestben!";
+    intro = "We are looking forward to seeing you at Smart Nail Studio! / Мы с нетерпением ждем вас в Smart Nail Studio! / Szeretettel várjuk Önt a Smart Nail Studio-ban!";
     statusColor = "#16a34a"; // Green
     statusLabel = "CONFIRMED / ПОДТВЕРЖДЕНО / VISSZAIGAZOLVA";
   } else if (type === "cancelled") {
-    subject = "Velvet Budapest - Booking Cancelled / Запись отменена / Foglalás törölve";
+    subject = "Smart Nail Studio - Booking Cancelled / Запись отменена / Foglalás törölve";
     heading = "Booking Cancelled / Запись отменена / Foglalás törölve";
     intro = "Your booking has been cancelled. If this is a mistake, please make a new appointment. / Ваша запись была отменена. Если это ошибка, пожалуйста, оформите новую запись. / Foglalása törlésre került. Ha ez tévedés, kérjük, foglaljon új időpontot.";
     statusColor = "#dc2626"; // Red
@@ -387,7 +403,7 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
     <body>
       <div class="container">
         <div class="header">
-          <h1>VELVET</h1>
+          <h1>SMART</h1>
           <p>Nail Studio Budapest</p>
         </div>
         <div class="content">
@@ -428,7 +444,7 @@ async function sendEmailNotification(booking: any, type: "created" | "confirmed"
           </div>
         </div>
         <div class="footer">
-          <p>© 2026 Velvet Manicure Studio. Budapest. All rights reserved.</p>
+          <p>© 2026 Smart Nail Studio. Budapest. All rights reserved.</p>
           <p>If you have any questions or need to reschedule, please call us at <a href="tel:+36301234567">+36 (30) 123-4567</a>.</p>
         </div>
       </div>
@@ -502,7 +518,7 @@ async function sendAdminEmailNotification(booking: any) {
   const formattedTime = bDateTime.isValid ? bDateTime.toFormat("HH:mm") : booking.time;
 
   const subject = `⚠️ NEW BOOKING: ${booking.firstName} ${booking.lastName} - ${booking.date} @ ${booking.time}`;
-  const adminUrl = `${process.env.APP_URL || "https://velvetnails.com"}/admin`;
+  const adminUrl = `${process.env.APP_URL || "https://smartnails.com"}/admin`;
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -631,7 +647,7 @@ async function sendAdminEmailNotification(booking: any) {
       <div class="container">
         <div class="header luxury">
           <h1>New Booking Request</h1>
-          <p>Velvet Budapest Admin Alert</p>
+          <p>Smart Nail Studio Admin Alert</p>
         </div>
         <div class="content">
           <h2 class="greeting">Hello Administrator,</h2>
@@ -681,7 +697,7 @@ async function sendAdminEmailNotification(booking: any) {
           <a href="${adminUrl}" class="action-button">Go to Admin Panel</a>
         </div>
         <div class="footer">
-          <p>© 2026 Velvet Manicure Studio. Budapest. Admin Notification Service.</p>
+          <p>© 2026 Smart Nail Studio. Budapest. Admin Notification Service.</p>
         </div>
       </div>
     </body>
@@ -1011,6 +1027,9 @@ app.post("/api/bookings", bookingLimiter, async (req, res) => {
     sendAdminEmailNotification(newBooking).catch(console.error);
     sendEmailNotification(newBooking, "created").catch(console.error);
 
+    // Notify admin via Socket.io
+    io.emit("booking:created", newBooking);
+
     res.status(201).json(newBooking);
   } catch (error: any) {
     console.error(`[BOOKING CRITICAL EXCEPTION] Failed to handle booking request. Time: ${requestReceivedAt}. Error:`, error);
@@ -1040,6 +1059,9 @@ app.put("/api/bookings/:id/status", authenticateAdmin, async (req, res) => {
       sendEmailNotification(updated, status).catch(console.error);
     }
 
+    // Notify all admins about the status change
+    io.emit("booking:updated", updated);
+
     res.json(updated);
   } catch (error) {
     console.error("Failed to update booking status API:", error);
@@ -1057,6 +1079,9 @@ app.delete("/api/bookings/:id", authenticateAdmin, async (req, res) => {
     if (!success) {
       return res.status(404).json({ error: "Booking not found" });
     }
+
+    // Notify admins about deletion
+    io.emit("booking:deleted", id);
 
     res.json({ success: true });
   } catch (error) {
@@ -1226,25 +1251,50 @@ const contactsSchema = z.object({
   addressHu: z.string().min(1),
   workingHoursEn: z.string().min(1),
   workingHoursRu: z.string().min(1),
-  workingHoursHu: z.string().min(1)
+  workingHoursHu: z.string().min(1),
 });
 
 // Update contacts (Protected - admin only)
 app.put("/api/contacts", authenticateAdmin, async (req, res) => {
   try {
-    const parseResult = contactsSchema.safeParse(req.body.contacts);
+    const parseResult = contactsSchema.safeParse(req.body);
     if (!parseResult.success) {
       return res.status(400).json({ error: "Invalid contacts data", details: parseResult.error.issues });
     }
-    const contacts = parseResult.data;
-    await saveContacts(contacts);
-    res.json(contacts);
+    const contactsToSave = parseResult.data;
+    await saveContacts(contactsToSave);
+
+    // After saving, load the contacts again to ensure we return the persisted state
+    const updatedContacts = await loadContacts();
+    res.json(updatedContacts);
   } catch (error) {
     console.error("Failed to save contacts API:", error);
     res.status(500).json({ error: "Failed to save contacts" });
   }
 });
+// Получить портфолио (Публичный)
+app.get("/api/portfolio", async (req, res) => {
+  try {
+    const items = await loadPortfolio();
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load portfolio" });
+  }
+});
 
+// Обновить портфолио (Только для админа)
+app.put("/api/portfolio", authenticateAdmin, async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ error: "Items must be an array" });
+    }
+    await savePortfolio(items);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save portfolio" });
+  }
+});
 async function setupVite() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1274,7 +1324,8 @@ async function setupVite() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 }

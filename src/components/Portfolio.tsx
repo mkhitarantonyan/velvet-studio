@@ -1,5 +1,4 @@
-import React, { useState } from "react";
-import { PORTFOLIO } from "../data";
+import React, { useState, useEffect, useMemo } from "react";
 import { PortfolioItem } from "../types";
 import { Eye, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -7,8 +6,13 @@ import { useLanguage } from "../lib/LanguageContext";
 
 export default function Portfolio() {
   const { language, t } = useLanguage();
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
 
+  // 1. Сначала объявляем все состояния (state)
+  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [activeItem, setActiveItem] = useState<PortfolioItem | null>(null);
+
+  // 2. Функции локализации (они не зависят от state, но используют language)
   const getLocalizedCategory = (item: PortfolioItem) => {
     if (language === "ru") return item.categoryRu;
     if (language === "hu") return item.categoryHu;
@@ -27,28 +31,48 @@ export default function Portfolio() {
     return item.descriptionEn;
   };
 
-  // Categories translation map for the tabs
-  const categoriesList = [
-    { key: "All", label: t("galleryAll") },
-    { key: "Minimalism", label: t("galleryMinimalism") },
-    { key: "Classics", label: t("galleryClassics") },
-    { key: "Art", label: t("galleryArt") }
-  ];
+  // 3. useMemo для списка категорий (использует portfolioItems, который уже объявлен)
+  const categoriesList = useMemo(() => {
+    // Собираем все уникальные категории (на английском)
+    const uniqueCategories = Array.from(
+      new Set(portfolioItems.map((item) => item.categoryEn))
+    ).filter((cat) => cat && cat.trim() !== ""); // убираем пустые
 
-  const filteredPortfolio = selectedCategory === "All"
-    ? PORTFOLIO
-    : PORTFOLIO.filter(item => item.categoryEn === selectedCategory);
+    // Формируем массив для фильтров: сначала "All", затем все остальные
+    return [
+      { key: "All", label: t("galleryAll") },
+      ...uniqueCategories.map((cat) => ({
+        key: cat,
+        label: cat,
+      })),
+    ];
+  }, [portfolioItems, t]);
 
-  const [activeItem, setActiveItem] = useState<PortfolioItem | null>(null);
+  // 4. Загружаем данные с сервера (useEffect)
+  useEffect(() => {
+    fetch("/api/portfolio")
+      .then((res) => res.json())
+      .then((data) => setPortfolioItems(data))
+      .catch(console.error);
+  }, []);
 
+  // 5. Фильтрованные элементы на основе выбранной категории
+  const filteredPortfolio =
+    selectedCategory === "All"
+      ? portfolioItems
+      : portfolioItems.filter((item) => item.categoryEn === selectedCategory);
+
+  // 6. Рендер (JSX)
   return (
     <section id="portfolio" className="bg-white py-16 sm:py-24">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        
         {/* Section Heading */}
         <div className="text-center">
           <h2 className="font-serif text-3xl font-light tracking-tight text-brand-950 sm:text-4xl">
-            {t("galleryTitle1")} <span className="font-serif italic text-brand-500 font-normal">{t("galleryTitle2")}</span>
+            {t("galleryTitle1")}{" "}
+            <span className="font-serif italic text-brand-500 font-normal">
+              {t("galleryTitle2")}
+            </span>
           </h2>
           <div className="mx-auto mt-2 h-0.5 w-16 bg-brand-300" />
           <p className="mx-auto mt-4 max-w-2xl text-sm text-brand-700">
@@ -121,7 +145,9 @@ export default function Portfolio() {
                 {/* Static Card Footer for Mobile (always visible fallback) */}
                 <div className="p-3 bg-white sm:group-hover:bg-brand-50 transition-colors">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-semibold text-brand-900">{getLocalizedTitle(item)}</h3>
+                    <h3 className="text-xs font-semibold text-brand-900">
+                      {getLocalizedTitle(item)}
+                    </h3>
                     <span className="text-[10px] font-medium text-brand-600 bg-brand-100/60 px-2 py-0.5 rounded">
                       {getLocalizedCategory(item)}
                     </span>
@@ -167,7 +193,7 @@ export default function Portfolio() {
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  
+
                   {/* Text Description */}
                   <div className="p-6 md:w-1/2 flex flex-col justify-center">
                     <span className="inline-block rounded bg-brand-100 px-2.5 py-0.5 text-[10px] font-bold text-brand-800 uppercase tracking-wider self-start">
@@ -191,7 +217,6 @@ export default function Portfolio() {
             </motion.div>
           )}
         </AnimatePresence>
-
       </div>
     </section>
   );

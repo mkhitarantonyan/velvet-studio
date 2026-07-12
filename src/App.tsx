@@ -6,7 +6,7 @@ import Procedures from "./components/Procedures";
 import Contacts from "./components/Contacts";
 import BookingModal from "./components/BookingModal";
 import AdminPanel from "./components/AdminPanel";
-import { Booking, Procedure, SalonContacts } from "./types";
+import { Booking, Procedure, SalonContacts, PortfolioItem } from "./types";
 import { Sparkles, Mail, Phone, MapPin, Instagram, ShieldAlert, CheckCircle2, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useLanguage } from "./lib/LanguageContext";
@@ -24,6 +24,7 @@ export default function App() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [procedures, setProcedures] = useState<Procedure[]>([]);
   const [contacts, setContacts] = useState<SalonContacts | null>(null);
+  const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
   const [activeSection, setActiveSection] = useState("hero");
 
   // Toast notifications
@@ -109,6 +110,18 @@ export default function App() {
     }
   };
 
+  const fetchPortfolio = async () => {
+    try {
+      const res = await fetch("/api/portfolio");
+      if (res.ok) {
+        const data = await res.json();
+        setPortfolio(data);
+      }
+    } catch (err) {
+      console.error("Error fetching portfolio:", err);
+    }
+  };
+
   // Check authentication status on initial load
   const checkAuthStatus = async () => {
     try {
@@ -130,6 +143,7 @@ export default function App() {
     checkAuthStatus();
     fetchProcedures();
     fetchContacts();
+    fetchPortfolio();
   }, []);
 
   useEffect(() => {
@@ -375,13 +389,34 @@ export default function App() {
         headers: { 
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ contacts: updatedContacts }),
+        body: JSON.stringify(updatedContacts),
       });
 
       if (!res.ok) throw new Error("Failed to update contacts");
       
       const saved = await res.json();
       setContacts(saved);
+    } catch (err) {
+      console.error(err);
+      throw err;
+    }
+  };
+
+  const handleUpdatePortfolio = async (updatedPortfolio: PortfolioItem[]) => {
+    try {
+      const res = await fetch("/api/portfolio", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: updatedPortfolio }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to update portfolio");
+      }
+      
+      // Re-fetch portfolio to get the latest state from server
+      await fetchPortfolio();
+
     } catch (err) {
       console.error(err);
       throw err;
@@ -440,7 +475,7 @@ export default function App() {
                   <Lock className="h-5 w-5 text-brand-200" />
                 </div>
                 <h2 className="font-serif text-2xl font-light tracking-wide">{t("adminLoginTitle")}</h2>
-                <p className="text-xs text-brand-300 mt-1">Velvet Manicure Studio • Budapest</p>
+                <p className="text-xs text-brand-300 mt-1">Smart Nail Studio • Budapest</p>
               </div>
               
               <form onSubmit={handleAdminLogin} className="p-8 space-y-4">
@@ -495,12 +530,14 @@ export default function App() {
                 bookings={bookings}
                 procedures={procedures}
                 contacts={contacts}
+                portfolio={portfolio}
                 onUpdateStatus={handleUpdateStatus}
                 onDeleteBooking={handleDeleteBooking}
                 onAddBooking={handleAddBooking}
                 onUpdateProcedures={handleUpdateProcedures}
                 onDeleteProcedures={handleDeleteProcedures}
                 onUpdateContacts={handleUpdateContacts}
+                onUpdatePortfolio={handleUpdatePortfolio}
                 onLogout={handleAdminLogout}
               />
             ) : (
@@ -556,11 +593,12 @@ export default function App() {
                   
                   {/* Brand info */}
                   <div className="space-y-4">
-                    <div className="flex items-center space-x-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500 text-white shadow-md">
-                        <Sparkles className="h-4 w-4" />
+                    <div className="flex items-center space-x-3">
+                      <img src="/src/assets/images/logo-02.png" alt="Smart Nail Studio Logo" className="h-10 w-auto" />
+                      <div>
+                        <span className="font-serif text-xl font-bold tracking-widest text-white uppercase">{t("logoTitle")}</span>
+                        <span className="block text-[10px] tracking-[0.2em] text-brand-400 font-medium uppercase">{t("logoSubtitle")}</span>
                       </div>
-                      <span className="font-serif text-lg font-bold tracking-widest text-white uppercase">{t("logoTitle")}</span>
                     </div>
                     <p className="text-xs text-brand-400 leading-relaxed">
                       {t("footerDesc")}

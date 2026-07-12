@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { Booking, Procedure, SalonContacts } from "../types";
+import { Booking, Procedure, SalonContacts, PortfolioItem } from "../types";
 import fs from "fs";
 import path from "path";
 
@@ -711,6 +711,63 @@ export async function saveContacts(contacts: SalonContacts): Promise<void> {
     await client.query(query, values);
   } catch (error) {
     console.error("Error saving contacts to PostgreSQL:", error);
+    throw error;
+  }
+}
+/**
+ * 4. Portfolio operations
+ */
+export async function loadPortfolio(): Promise<PortfolioItem[]> {
+  if (!isDbConfigured()) {
+    const filePath = path.join(process.cwd(), "portfolio.json");
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, "utf-8");
+        return JSON.parse(content);
+      }
+    } catch (err) {
+      console.error("Failed to read portfolio.json:", err);
+    }
+    return [];
+  }
+
+  const client = getPool();
+  try {
+    const { rows } = await client.query("SELECT * FROM portfolio");
+    return rows.map((r): PortfolioItem => ({
+      id: String(r.id),
+      titleEn: r.title_en, titleRu: r.title_ru, titleHu: r.title_hu,
+      descriptionEn: r.description_en, descriptionRu: r.description_ru, descriptionHu: r.description_hu,
+      image: r.image,
+      categoryEn: r.category_en, categoryRu: r.category_ru, categoryHu: r.category_hu
+    }));
+  } catch (error) {
+    // Если таблицы нет, просто возвращаем пустой массив
+    console.error("Error fetching portfolio from PostgreSQL:", error);
+    return [];
+  }
+}
+
+export async function savePortfolio(items: PortfolioItem[]): Promise<void> {
+  if (!isDbConfigured()) {
+    const filePath = path.join(process.cwd(), "portfolio.json");
+    writeJsonAtomically(filePath, items);
+    return;
+  }
+
+  const client = getPool();
+  try {
+    // Для простоты: удаляем всё и записываем заново
+    await client.query("DELETE FROM portfolio");
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO portfolio (id, title_en, title_ru, title_hu, description_en, description_ru, description_hu, image, category_en, category_ru, category_hu) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [item.id, item.titleEn, item.titleRu, item.titleHu, item.descriptionEn, item.descriptionRu, item.descriptionHu, item.image, item.categoryEn, item.categoryRu, item.categoryHu]
+      );
+    }
+  } catch (error) {
+    console.error("Error saving portfolio to PostgreSQL:", error);
     throw error;
   }
 }

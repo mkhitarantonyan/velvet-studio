@@ -2,7 +2,7 @@ export type Language = "en" | "ru" | "hu";
 
 export const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en: {
-    logoTitle: "VELVET",
+    logoTitle: "Smart",
     logoSubtitle: "nail studio",
     navGallery: "Gallery",
     navServices: "Services & Prices",
@@ -140,10 +140,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     
     adminTabBookings: "Manage Bookings",
     adminTabEditProcedures: "Edit Procedures",
-    adminTabEditContacts: "Edit Contacts & Salon Info"
+    adminTabEditContacts: "Edit Contacts & Salon Info",
+    servicesPriceDisclaimer: "All shown prices are preliminary estimates (calculated at ~400 HUF = 1 EUR). The final price may be adjusted during your appointment depending on custom additions, specialized design, or additional materials required for your specific service."
   },
   ru: {
-    logoTitle: "VELVET",
+    logoTitle: "Smart",
     logoSubtitle: "студия маникюра",
     navGallery: "Галерея",
     navServices: "Услуги и цены",
@@ -281,10 +282,11 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     
     adminTabBookings: "Управление записями",
     adminTabEditProcedures: "Редактировать услуги",
-    adminTabEditContacts: "Редактировать контакты салона"
+    adminTabEditContacts: "Редактировать контакты салона",
+    servicesPriceDisclaimer: "Все указанные цены являются предварительными и ориентировочными (расчет по курсу ~400 Ft = 1 €). Окончательная стоимость может быть скорректирована во время сеанса в зависимости от сложности, дизайна или дополнительных материалов."
   },
   hu: {
-    logoTitle: "VELVET",
+    logoTitle: "Smart",
     logoSubtitle: "körömstúdió",
     navGallery: "Galéria",
     navServices: "Szolgáltatások & Árak",
@@ -422,6 +424,7 @@ export const TRANSLATIONS: Record<Language, Record<string, string>> = {
     
     adminTabBookings: "Foglalások kezelése",
     adminTabEditProcedures: "Szolgáltatások szerkesztése",
-    adminTabEditContacts: "Kapcsolati adatok szerkesztése"
+    adminTabEditContacts: "Kapcsolati adatok szerkesztése",
+    servicesPriceDisclaimer: "Minden feltüntetett ár előzetes kalkuláció (~400 Ft = 1 € árfolyamon számolva). A végleges ár a kezelés során módosulhat a plusz szolgáltatások, egyedi dizájn vagy felhasznált anyagok függvényében."
   }
 };

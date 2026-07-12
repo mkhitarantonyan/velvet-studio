@@ -24,12 +24,10 @@ export default function Header({ onOpenBooking, activeSection }: HeaderProps) {
         
         {/* Logo */}
         <a href="#hero" className="flex items-center space-x-1.5 sm:space-x-2">
-          <motion.div
-            whileHover={{ rotate: 15 }}
-            className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-brand-500 text-white shadow-md shrink-0"
-          >
-            <Sparkles className="h-4.5 w-4.5 sm:h-5 sm:w-5" />
-          </motion.div>
+          <img 
+            src="/src/assets/images/logo-02.png" 
+            alt="Smart Nail Studio logo" 
+            className="h-8 w-8 sm:h-9 sm:w-9" />
           <div className="flex flex-col min-w-0">
             <span className="font-serif text-lg sm:text-xl font-bold tracking-widest text-brand-900 uppercase leading-none">
               {t("logoTitle")}
