@@ -1,0 +1,61 @@
+import { PortfolioItem } from "./types";
+import nudeChicImg from "./assets/images/manicure_nude_chic_1782970221462.jpg";
+import frenchModernImg from "./assets/images/manicure_french_modern_1782970235107.jpg";
+import deepEmeraldImg from "./assets/images/manicure_deep_emerald_1782970248486.jpg";
+import festiveGlamImg from "./assets/images/manicure_festive_glam_1782970259924.jpg";
+
+export const PORTFOLIO: PortfolioItem[] = [
+  {
+    id: "p1",
+    titleEn: "Chic Nude",
+    titleRu: "Изысканный Нюд",
+    titleHu: "Elegáns natúr",
+    descriptionEn: "Minimalistic nude gloss manicure with elegant gold foil accents. Ideal for any occasion.",
+    descriptionRu: "Минималистичный нюдово-бежевый глянцевый маникюр с изящными акцентами из золотой фольги. Идеально для любого повода.",
+    descriptionHu: "Minimalista natúr fényes manikűr elegáns arany fólia díszítéssel. Bármilyen alkalomra tökéletes.",
+    image: nudeChicImg,
+    categoryEn: "Minimalism",
+    categoryRu: "Минимализм",
+    categoryHu: "Minimalizmus",
+  },
+  {
+    id: "p2",
+    titleEn: "Metallic French",
+    titleRu: "Металлический Френч",
+    titleHu: "Metál francia",
+    descriptionEn: "Modern interpretation of a French manicure with thin silver tips on a soft pink base.",
+    descriptionRu: "Современная интерпретация французского маникюра с тонкими серебряными наконечниками на нежно-розовой базе.",
+    descriptionHu: "A francia manikűr modern változata finom ezüst végekkel a halványrózsaszín alapon.",
+    image: frenchModernImg,
+    categoryEn: "Classics",
+    categoryRu: "Классика",
+    categoryHu: "Klasszikus",
+  },
+  {
+    id: "p3",
+    titleEn: "Deep Emerald",
+    titleRu: "Глубокий Изумруд",
+    titleHu: "Mély smaragd",
+    descriptionEn: "Luxurious matte manicure in deep emerald green on an oval shape. A noble and alluring look.",
+    descriptionRu: "Роскошный матовый маникюр глубокого изумрудного оттенка на овальной форме ногтей. Благородный и притягательный образ.",
+    descriptionHu: "Luxus matt manikűr mély smaragdzöld színben, ovális körömformán. Elegáns és vonzó megjelenés.",
+    image: deepEmeraldImg,
+    categoryEn: "Art",
+    categoryRu: "Арт",
+    categoryHu: "Művészi",
+  },
+  {
+    id: "p4",
+    titleEn: "Marble Shimmer",
+    titleRu: "Мраморный Блеск",
+    titleHu: "Márványos csillogás",
+    descriptionEn: "Stylish design featuring delicate marble textures enhanced by a gentle silver glitter shimmer.",
+    descriptionRu: "Стильный праздничный дизайн с нежной мраморной текстурой, дополненный легким сиянием серебряного глиттера.",
+    descriptionHu: "Stílusos ünnepi design finom márvány textúrával, ezüst csillámokkal kiegészítve.",
+    image: festiveGlamImg,
+    categoryEn: "Art",
+    categoryRu: "Арт",
+    categoryHu: "Művészi",
+  }
+];
+

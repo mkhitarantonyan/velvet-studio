@@ -1,0 +1,28 @@
+[
+  {
+    "id": "a70a0ada-80a6-4fd5-8014-f46749db768e",
+    "titleEn": "New Work",
+    "titleRu": "New Work",
+    "titleHu": "New Work",
+    "descriptionEn": "",
+    "descriptionRu": "",
+    "descriptionHu": "",
+    "image": "https://i.ibb.co/DH416Vtq/manicure-deep-emerald-1782970248486.jpg",
+    "categoryEn": "Мемориес",
+    "categoryRu": "Мемориес",
+    "categoryHu": "Мемориес"
+  },
+  {
+    "id": "522743b4-02d1-4914-a54c-58dc42345c5a",
+    "titleEn": "New",
+    "titleRu": "Новое",
+    "titleHu": "Új",
+    "descriptionEn": "",
+    "descriptionRu": "",
+    "descriptionHu": "",
+    "image": "https://i.ibb.co/DH416Vtq/manicure-deep-emerald-1782970248486.jpg",
+    "categoryEn": "Art",
+    "categoryRu": "Art",
+    "categoryHu": "Art"
+  }
+]
