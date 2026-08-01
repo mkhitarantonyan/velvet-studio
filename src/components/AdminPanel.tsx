@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useLanguage } from "../lib/LanguageContext";
+import { getErrorMessage } from "../lib/errorHandling";
 
 interface AdminPanelProps {
   bookings: Booking[];
@@ -55,7 +56,7 @@ interface AdminPanelProps {
   onDeleteBooking: (id: string) => Promise<void>;
   onAddBooking: (bookingData: Omit<Booking, 'id' | 'status' | 'createdAt'>) => Promise<void>;
   onUpdateProcedures: (procedures: Procedure[]) => Promise<Procedure[]>;
-  onDeleteProcedures: (ids: string[]) => Promise<any>;
+  onDeleteProcedures: (ids: string[]) => Promise<Procedure[]>;
   onUpdateContacts: (contacts: SalonContacts) => Promise<void>;
   onUpdatePortfolio: (items: PortfolioItem[]) => Promise<void>;
   onLogout: () => void;
@@ -136,11 +137,11 @@ export default function AdminPanel({
         }
         return p;
       }));
-    } catch (err: any) {
+    } catch (err) {
       console.error("Translation error:", err);
       alert(language === "ru" 
-        ? `Ошибка перевода: ${err.message}` 
-        : `Translation failed: ${err.message}`
+        ? `Ошибка перевода: ${getErrorMessage(err)}` 
+        : `Translation failed: ${getErrorMessage(err)}`
       );
     } finally {
       setTranslatingIds(prev => prev.filter(id => id !== itemId));
@@ -194,9 +195,9 @@ export default function AdminPanel({
         }
         return p;
       }));
-    } catch (err: any) {
+    } catch (err) {
       console.error("Translation error:", err);
-      alert(language === "ru" ? `Ошибка перевода: ${err.message}` : `Translation failed: ${err.message}`);
+      alert(language === "ru" ? `Ошибка перевода: ${getErrorMessage(err)}` : `Translation failed: ${getErrorMessage(err)}`);
     } finally {
       setTranslatingProcIds(prev => prev.filter(id => id !== procId));
     }
@@ -1927,7 +1928,7 @@ Status: ${booking.status.toUpperCase()}
                             onClick={() => handleTranslateProcedure(proc.id)}
                             disabled={translatingProcIds.includes(proc.id)}
                             className="p-1 rounded-lg border border-brand-200 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 self-center"
-                            title={language === "ru" ? "Перевести на все языки с помощью Gemini AI" : "Translate to all languages using Gemini AI"}
+                            title={language === "ru" ? "Перевести на все языки автоматически" : "Translate to all languages automatically"}
                           >
                             <span>{translatingProcIds.includes(proc.id) ? "⏳" : "🪄"}</span>
                           </button>
@@ -2579,7 +2580,7 @@ Status: ${booking.status.toUpperCase()}
                                   onClick={() => handleTranslatePortfolioItem(item.id)}
                                   disabled={translatingIds.includes(item.id)}
                                   className="text-[10px] font-bold text-brand-600 bg-brand-50 hover:bg-brand-100 border border-brand-200 px-2 py-0.5 rounded flex items-center gap-1 hover:text-brand-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                  title={language === "ru" ? "Перевести на все языки с помощью Gemini AI" : "Translate to all languages using Gemini AI"}
+                                  title={language === "ru" ? "Перевести на все языки автоматически" : "Translate to all languages automatically"}
                                 >
                                   <span>{translatingIds.includes(item.id) ? "⏳" : "🪄"}</span>
                                   <span>{language === "ru" ? "Перевести" : "Translate"}</span>
@@ -2867,7 +2868,7 @@ Status: ${booking.status.toUpperCase()}
                                   onClick={() => handleTranslatePortfolioItem(item.id)}
                                   disabled={translatingIds.includes(item.id)}
                                   className="p-1.5 rounded border border-brand-200 bg-brand-50 hover:bg-brand-100 text-brand-600 hover:text-brand-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-shrink-0"
-                                  title={language === "ru" ? "Перевести на все языки с помощью Gemini AI" : "Translate to all languages using Gemini AI"}
+                                  title={language === "ru" ? "Перевести на все языки автоматически" : "Translate to all languages automatically"}
                                 >
                                   <span>{translatingIds.includes(item.id) ? "⏳" : "🪄"}</span>
                                 </button>

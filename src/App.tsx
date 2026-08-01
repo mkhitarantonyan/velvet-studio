@@ -10,6 +10,7 @@ import { Booking, Procedure, SalonContacts, PortfolioItem } from "./types";
 import { Sparkles, Mail, Phone, MapPin, Instagram, ShieldAlert, CheckCircle2, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useLanguage } from "./lib/LanguageContext";
+import { getErrorMessage } from "./lib/errorHandling";
 import logoImg from "/assets/images/logo-02.png";
 
 export default function App() {
@@ -73,7 +74,7 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        const normalized = Array.isArray(data) ? data.map((b: any) => ({ ...b, id: String(b.id) })) : [];
+        const normalized = Array.isArray(data) ? data.map((b: Booking) => ({ ...b, id: String(b.id) })) : [];
         setBookings(normalized);
       } else if (res.status === 401) {
         handleAdminLogout(false); // Don't show toast on session expiry
@@ -203,8 +204,8 @@ export default function App() {
       setIsAuthenticated(true);
       showToast(language === "ru" ? "Авторизация прошла успешно!" : "Welcome back, Admin!", "success");
       // Bookings will be fetched by the useEffect hook watching `isAuthenticated`
-    } catch (err: any) {
-      setLoginError(t("adminLoginError") || err.message);
+    } catch (err) {
+      setLoginError(t("adminLoginError") || getErrorMessage(err));
     }
   };
 
@@ -241,8 +242,8 @@ export default function App() {
       const updatedBooking = await res.json();
       const normalizedUpdated = { ...updatedBooking, id: String(updatedBooking.id) };
       
-      setBookings((prev) =>
-        prev.map((b) => (String(b.id) === String(id) ? normalizedUpdated : b))
+      setBookings((prev: Booking[]) =>
+        prev.map((b: Booking) => (String(b.id) === String(id) ? normalizedUpdated : b))
       );
 
       const statusMsg = status === "confirmed" 
@@ -274,7 +275,7 @@ export default function App() {
 
       if (!res.ok) throw new Error("Failed to delete booking");
 
-      setBookings((prev) => prev.filter((b) => String(b.id) !== String(id)));
+      setBookings((prev: Booking[]) => prev.filter((b: Booking) => String(b.id) !== String(id)));
       showToast(
         language === "ru" 
           ? "Запись удалена из системы" 
@@ -306,7 +307,7 @@ export default function App() {
 
       const newBooking = await res.json();
       const normalizedNew = { ...newBooking, id: String(newBooking.id) };
-      setBookings((prev) => [normalizedNew, ...prev]);
+      setBookings((prev: Booking[]) => [normalizedNew, ...prev]);
       
       showToast(
         language === "ru"
@@ -314,8 +315,8 @@ export default function App() {
           : `Client ${newBooking.firstName} successfully booked for ${newBooking.time}!`,
         "success"
       );
-    } catch (err: any) {
-      throw new Error(err.message || "Error creating booking");
+    } catch (err) {
+      throw new Error(getErrorMessage(err, "Error creating booking"));
     }
   };
 
@@ -342,8 +343,7 @@ export default function App() {
         isHidden: p.isHidden ?? false,
       }));
       setProcedures(normalizedSaved);
-      console.log("📦 Процедуры в App после сохранения:", normalizedSaved);
-      return normalizedSaved; // ← важно: возвращаем для AdminPanel
+      return normalizedSaved;
     } catch (err) {
       console.error(err);
       throw err;
@@ -351,7 +351,7 @@ export default function App() {
   };
 
   // Delete Procedures Handler (Admin)
-  const handleDeleteProcedures = async (ids: string[]) => {
+  const handleDeleteProcedures = async (ids: string[]): Promise<Procedure[]> => {
     try {
       const res = await fetch(`/api/procedures`, {
         method: "DELETE",
@@ -363,17 +363,20 @@ export default function App() {
 
       if (!res.ok) {
         const err = new Error(responseData.error || "Failed to delete procedures");
-        (err as any).deleted = responseData.deleted;
-        (err as any).blocked = responseData.blocked;
+        const errorWithMeta = err as Error & { deleted?: string[]; blocked?: string[] };
+        errorWithMeta.deleted = responseData.deleted;
+        errorWithMeta.blocked = responseData.blocked;
         
         if (responseData.deleted && responseData.deleted.length > 0) {
-          setProcedures((prev) => prev.filter((p) => !responseData.deleted.includes(p.id)));
+          setProcedures((prev: Procedure[]) => prev.filter((p: Procedure) => !responseData.deleted.includes(p.id)));
         }
         
         throw err;
       }
       
-      setProcedures((prev) => prev.filter((p) => !ids.includes(p.id)));
+      const updatedProcedures = procedures.filter((p: Procedure) => !ids.includes(p.id));
+      setProcedures(updatedProcedures);
+      return updatedProcedures;
 
     } catch (err) {
       console.error("Error deleting procedures:", err);
@@ -445,7 +448,7 @@ export default function App() {
             initial={{ opacity: 0, y: -50, x: "-50%" }}
             animate={{ opacity: 1, y: 0, x: "-50%" }}
             exit={{ opacity: 0, y: -50, x: "-50%" }}
-            className="fixed top-24 left-1/2 z-50 flex items-center gap-2 rounded-full bg-brand-950 px-6 py-3.5 text-xs font-semibold text-white shadow-xl min-w-[280px]"
+            className="fixed top-24 left-1/2 z-50 flex items-center gap-2 rounded-full bg-brand-950 px-6 py-3.5 text-xs font-semibold text-white shadow-xl min-w-70"
           >
             {toastType === "success" ? (
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />

@@ -11,7 +11,6 @@ interface ProceduresProps {
 
 export default function Procedures({ procedures, onSelectProcedure }: ProceduresProps) {
   const { t, formatPrice } = useLanguage();
-  console.log("🧩 Процедуры в публичном компоненте:", procedures);
 
   // The translation string ships with a leading "💡" for older layouts that just
   // dropped it inline. The new notice card below renders its own icon badge, so

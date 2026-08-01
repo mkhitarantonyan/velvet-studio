@@ -31,7 +31,7 @@ import {
 import helmet from "helmet";
 import { z } from "zod";
 
-const app = express(); // <--- ДОБАВЬТЕ ТОЛЬКО ЭТУ СТРОКУ
+const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
 app.set("trust proxy", 1);
@@ -1274,24 +1274,16 @@ app.put("/api/contacts", authenticateAdmin, async (req, res) => {
   }
 });
 
-// Initialize Gemini Client Lazily
-let aiClient: any = null;
-function getGeminiClient() {
-  if (!aiClient) {
+let translationClient: GoogleGenAI | null = null;
+function getTranslationClient() {
+  if (!translationClient) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is required but not configured. Please add it in Settings > Secrets.");
+      throw new Error("GEMINI_API_KEY is not configured. Add it to your .env file to enable automatic translation.");
     }
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        }
-      }
-    });
+    translationClient = new GoogleGenAI({ apiKey });
   }
-  return aiClient;
+  return translationClient;
 }
 
 // Translate API endpoint (admin only)
@@ -1302,9 +1294,9 @@ app.post("/api/translate", authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: "sourceLang and at least one of title/description are required." });
     }
 
-    const ai = getGeminiClient();
+    const ai = getTranslationClient();
 
-    const systemInstruction = `You are an expert translator for a premium luxury nail and beauty studio called "Smart Nail Studio" in Budapest.
+    const systemInstruction = `You are an expert translator for a premium luxury nail and beauty studio called "Velvet Manicure Studio" in Budapest.
 Translate the provided text from the source language (${sourceLang === 'ru' ? 'Russian' : sourceLang === 'hu' ? 'Hungarian' : 'English'}) into the remaining two languages of: English, Russian, Hungarian.
 Maintain a premium, luxurious, elegant, and professional salon tone. Ensure nail-art and manicure specific terminology is translated accurately (e.g. apparatus manicure, gel polish, base coat, nail extensions, French design, ombre, design).
 Return the result as a JSON object containing the translations. For the source language, copy the input values exactly.`;
@@ -1336,7 +1328,7 @@ Description: "${description || ""}"`;
 
     const resultText = response.text;
     if (!resultText) {
-      throw new Error("Gemini returned an empty translation response.");
+      throw new Error("Translation service returned an empty response.");
     }
 
     const translations = JSON.parse(resultText);

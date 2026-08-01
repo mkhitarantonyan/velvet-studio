@@ -3,6 +3,7 @@ import { X, Calendar, Clock, Sparkles, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Booking, Procedure } from "../types";
 import { useLanguage } from "../lib/LanguageContext";
+import { getErrorMessage } from "../lib/errorHandling";
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -244,15 +245,16 @@ export default function BookingModal({ isOpen, onClose, preselectedProcedure, on
       setPhone("");
       setEmail("");
       setComment("");
-    } catch (err: any) {
-      if (err.message.includes("occupied") || err.message.includes("taken") || err.message.includes("overlap") || err.message.includes("overlaps")) {
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (message.includes("occupied") || message.includes("taken") || message.includes("overlap") || message.includes("overlaps")) {
         setError(t({
           en: "This time slot is no longer available. Please select another time slot.",
           ru: "Это время уже забронировано. Пожалуйста, выберите другое свободное время.",
           hu: "Ez az időpont már foglalt. Kérjük, válasszon egy másik időpontot."
         }));
       } else {
-        setError(err.message || "Server connection error. Please try again.");
+        setError(message || "Server connection error. Please try again.");
       }
     } finally {
       setIsLoading(false);
