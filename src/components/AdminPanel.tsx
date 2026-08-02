@@ -709,8 +709,8 @@ Status: ${booking.status.toUpperCase()}
                           phone.includes(search) ||
                           procedureName.includes(search);
 
-    if (statusFilter === "all") return matchesSearch;
-    return matchesSearch && booking.status === statusFilter;
+    if (currentStatusFilter === "all") return matchesSearch;
+    return matchesSearch && booking.status === currentStatusFilter;
   });}
 
   const filteredBookings = getFilteredBookings(bookings, searchTerm, statusFilter);

@@ -33,6 +33,68 @@ import { z } from "zod";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const ENV_PATH = path.resolve(process.cwd(), ".env");
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is required. Define it in the environment before starting the server.`);
+  }
+  return value;
+}
+
+function getAdminPassword(): string {
+  const existing = process.env.ADMIN_PASSWORD?.trim();
+  if (existing) return existing;
+
+  if (IS_PRODUCTION) {
+    throw new Error("ADMIN_PASSWORD is required. Define it in the environment before starting the server.");
+  }
+
+  const generated = crypto.randomBytes(12).toString("base64url");
+  const encoded = encodeEnvValue(generated);
+  const line = `ADMIN_PASSWORD=${encoded}`;
+
+  if (fs.existsSync(ENV_PATH)) {
+    const content = fs.readFileSync(ENV_PATH, "utf8");
+    const hasKey = /^ADMIN_PASSWORD=/m.test(content);
+    if (!hasKey) {
+      const updated = `${content.trimEnd()}\n${line}\n`;
+      fs.writeFileSync(ENV_PATH, updated, "utf8");
+    }
+  } else {
+    fs.writeFileSync(ENV_PATH, `${line}\n`, "utf8");
+  }
+
+  process.env.ADMIN_PASSWORD = generated;
+  console.warn(`ADMIN_PASSWORD was missing. Generated and saved to .env for development: ${generated}`);
+  return generated;
+}
+
+function encodeEnvValue(rawValue: string): string {
+  if (/\r|\n/.test(rawValue)) {
+    throw new Error("Password cannot contain line breaks.");
+  }
+  const escaped = rawValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function upsertEnvVariable(key: string, rawValue: string): void {
+  if (!fs.existsSync(ENV_PATH)) {
+    throw new Error(".env file was not found. Create .env and set ADMIN_PASSWORD there.");
+  }
+
+  const encodedValue = encodeEnvValue(rawValue);
+  const envFileContent = fs.readFileSync(ENV_PATH, "utf8");
+  const lineRegex = new RegExp(`^${key}=.*$`, "m");
+
+  const updatedContent = lineRegex.test(envFileContent)
+    ? envFileContent.replace(lineRegex, `${key}=${encodedValue}`)
+    : `${envFileContent.trimEnd()}\n${key}=${encodedValue}\n`;
+
+  fs.writeFileSync(ENV_PATH, updatedContent, "utf8");
+}
 
 app.set("trust proxy", 1);
 app.use(helmet({
@@ -114,13 +176,19 @@ function withBookingMutationLock<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 const JWT_SECRET = (() => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    console.warn("⚠️ JWT_SECRET is not set in environment. Falling back to a temporary secret for development.");
-    return "temp_velvet_studio_jwt_secret_key_1234567890_dev_fallback";
+  const secret = process.env.JWT_SECRET?.trim();
+  if (secret) return secret;
+
+  if (IS_PRODUCTION) {
+    throw new Error("JWT_SECRET is required in production. Define it in the environment before starting the server.");
   }
-  return secret;
+
+  const ephemeralSecret = crypto.randomBytes(48).toString("hex");
+  console.warn("JWT_SECRET is not set. Using an ephemeral in-memory secret for this dev session only.");
+  return ephemeralSecret;
 })();
+// Fail fast if ADMIN_PASSWORD is missing. Password must come from env/.env only.
+getAdminPassword();
 
 function generateToken(payload: any): string {
   return jwt.sign(payload, JWT_SECRET, { algorithm: "HS256", expiresIn: "4h" });
@@ -743,11 +811,11 @@ app.get("/api/health", (req, res) => {
 // Admin Authentication Login Endpoint
 app.post("/api/admin/login", loginLimiter, (req, res) => {
   const { password } = req.body;
-  let adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminPassword) {
-    console.warn("⚠️ ADMIN_PASSWORD is not set in environment. Falling back to default 'velvet2026' for development login.");
-    adminPassword = "velvet2026";
+  let adminPassword: string;
+  try {
+    adminPassword = getAdminPassword();
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || "Server is not configured" });
   }
 
   if (password && safeCompare(password.trim(), adminPassword.trim())) {
@@ -755,8 +823,8 @@ app.post("/api/admin/login", loginLimiter, (req, res) => {
 
     res.cookie("velvet_admin_token", token, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: IS_PRODUCTION,
+      sameSite: IS_PRODUCTION ? "none" : "lax",
       maxAge: 4 * 60 * 60 * 1000, // 4 hours (matches JWT TTL)
     });
 
@@ -770,8 +838,8 @@ app.post("/api/admin/login", loginLimiter, (req, res) => {
 app.post("/api/admin/logout", (req, res) => {
   res.clearCookie("velvet_admin_token", {
     httpOnly: true,
-    secure: true,
-    sameSite: "none"
+    secure: IS_PRODUCTION,
+    sameSite: IS_PRODUCTION ? "none" : "lax"
   });
   return res.json({ success: true });
 });
@@ -779,46 +847,29 @@ app.post("/api/admin/logout", (req, res) => {
 // Admin Change Password Endpoint
 app.post("/api/admin/change-password", authenticateAdmin, (req, res) => {
   const { currentPassword, newPassword } = req.body;
-  let adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminPassword) {
-    adminPassword = "velvet2026";
+  let adminPassword: string;
+  try {
+    adminPassword = getAdminPassword();
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || "Server is not configured" });
   }
 
   if (!currentPassword || !safeCompare(currentPassword.trim(), adminPassword.trim())) {
     return res.status(401).json({ error: "Invalid current password" });
   }
 
-  if (!newPassword || newPassword.length < 6) {
+  const trimmedNewPassword = typeof newPassword === "string" ? newPassword.trim() : "";
+  if (!trimmedNewPassword || trimmedNewPassword.length < 6) {
     return res.status(400).json({ error: "New password must be at least 6 characters long." });
   }
 
   try {
-    const envPath = path.resolve(process.cwd(), ".env");
-    let passwordUpdated = false;
-    
-    if (fs.existsSync(envPath)) {
-      let envFile = fs.readFileSync(envPath, "utf8");
-      
-      // Handle the case where ADMIN_PASSWORD is in the file
-      if (/^ADMIN_PASSWORD=/m.test(envFile)) {
-        envFile = envFile.replace(/^ADMIN_PASSWORD=.*$/m, `ADMIN_PASSWORD="${newPassword.trim()}"`);
-      } else {
-        envFile += `\nADMIN_PASSWORD="${newPassword.trim()}"\n`;
-      }
-      fs.writeFileSync(envPath, envFile, "utf8");
-      passwordUpdated = true;
-    } else {
-      console.warn("⚠️ .env file not found. Updating password only in memory. It will reset on server restart.");
-    }
-    
-    // Update memory
-    process.env.ADMIN_PASSWORD = newPassword.trim();
-    
-    return res.json({ success: true, message: passwordUpdated ? "Password updated permanently." : "Password updated for this session only." });
+    upsertEnvVariable("ADMIN_PASSWORD", trimmedNewPassword);
+    process.env.ADMIN_PASSWORD = trimmedNewPassword;
+    return res.json({ success: true, message: "Password updated in .env." });
   } catch (err) {
     console.error("Failed to change password:", err);
-    return res.status(500).json({ error: "Failed to save new password." });
+    return res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save new password." });
   }
 });
 
@@ -1290,7 +1341,7 @@ function getTranslationClient() {
 app.post("/api/translate", authenticateAdmin, async (req, res) => {
   try {
     const { title, description, sourceLang } = req.body;
-    if (!sourceLang || (!title && !description)) {
+    if (!sourceLang || !["en", "ru", "hu"].includes(sourceLang) || (!title && !description)) {
       return res.status(400).json({ error: "sourceLang and at least one of title/description are required." });
     }
 
@@ -1332,7 +1383,14 @@ Description: "${description || ""}"`;
     }
 
     const translations = JSON.parse(resultText);
-    res.json(translations);
+
+    // Keep backward compatibility for services translation UI that expects name*.
+    res.json({
+      ...translations,
+      nameEn: translations.titleEn,
+      nameRu: translations.titleRu,
+      nameHu: translations.titleHu,
+    });
   } catch (error: any) {
     console.error("Translation API error:", error);
     res.status(500).json({ 

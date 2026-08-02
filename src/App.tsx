@@ -60,6 +60,7 @@ export default function App() {
     return () => {
       window.removeEventListener("hashchange", checkAdminRoute);
       window.removeEventListener("popstate", checkAdminRoute);
+      window.history.pushState = originalPushState;
     };
   }, []);
 
@@ -128,7 +129,7 @@ export default function App() {
   const checkAuthStatus = async () => {
     try {
       // A lightweight endpoint to check the cookie without fetching all data
-      const res = await fetch("/api/admin/auth-check"); // This endpoint needs to be created
+      const res = await fetch("/api/admin/auth-check");
       if (res.ok) {
         setIsAuthenticated(true);
       } else {
@@ -466,7 +467,13 @@ export default function App() {
       />
 
       <main className="grow flex flex-col">
-        {isAdminPath && !isAuthenticated ? (
+        {isAdminPath && !authChecked ? (
+          <div className="grow flex items-center justify-center bg-brand-50/40 p-4 min-h-[calc(100vh-80px)]">
+            <div className="text-sm font-semibold text-brand-700">
+              {language === "ru" ? "Проверка авторизации..." : language === "hu" ? "Hitelesítés ellenőrzése..." : "Checking authentication..."}
+            </div>
+          </div>
+        ) : isAdminPath && !isAuthenticated ? (
           /* Render password screen if on /admin and not authenticated (or auth check is in progress) */
           <div className="grow flex items-center justify-center bg-brand-50/40 p-4 min-h-[calc(100vh-80px)]">
             <motion.div
